@@ -79,7 +79,7 @@ describe('memory sqlite sync + markdown backfill', () => {
     fs.writeFileSync(path.join(globalDir, 'USER.md'), userEntries.join(ENTRY_DELIMITER), 'utf-8');
     fs.writeFileSync(path.join(globalDir, 'failures.md'), failureEntries.join(ENTRY_DELIMITER), 'utf-8');
 
-    const projectDir = path.join(agentRoot, 'project-a');
+    const projectDir = path.join(agentRoot, 'projects-memory', 'project-a');
     fs.mkdirSync(projectDir, { recursive: true });
     fs.writeFileSync(
       path.join(projectDir, 'MEMORY.md'),

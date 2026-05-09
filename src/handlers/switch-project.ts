@@ -8,27 +8,29 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { MemoryConfig } from "../types.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 
-export function registerSwitchProjectCommand(pi: ExtensionAPI): void {
+export function registerSwitchProjectCommand(pi: ExtensionAPI, config?: MemoryConfig): void {
+  const projectsMemoryDir = config?.projectsMemoryDir ?? "projects-memory";
   pi.registerCommand("memory-switch-project", {
     description: "Switch the active project for project-scoped memory",
 
     async handler(_args, ctx) {
       const homeDir = os.homedir();
       const agentDir = path.join(homeDir, ".pi", "agent");
+      const projectsDir = path.join(agentDir, projectsMemoryDir);
 
-      // Discover all project directories (subdirectories of ~/.pi/agent/ that have MEMORY.md)
+      // Discover all project directories (subdirectories of projects-memory/ that have MEMORY.md)
       let projects: string[] = [];
       try {
-        const entries = await fs.readdir(agentDir, { withFileTypes: true });
+        const entries = await fs.readdir(projectsDir, { withFileTypes: true });
         for (const entry of entries) {
           if (!entry.isDirectory()) continue;
-          if (entry.name === "memory" || entry.name === "skills") continue; // skip core dirs
           try {
-            await fs.access(path.join(agentDir, entry.name, "MEMORY.md"));
+            await fs.access(path.join(projectsDir, entry.name, "MEMORY.md"));
             projects.push(entry.name);
           } catch { /* no MEMORY.md — skip */ }
         }
@@ -57,7 +59,7 @@ export function registerSwitchProjectCommand(pi: ExtensionAPI): void {
         // Read entry count
         let entryCount = 0;
         try {
-          const raw = await fs.readFile(path.join(agentDir, proj, "MEMORY.md"), "utf-8");
+          const raw = await fs.readFile(path.join(projectsDir, proj, "MEMORY.md"), "utf-8");
           entryCount = raw.split("\n§\n").filter(Boolean).length;
         } catch { /* ignore */ }
 

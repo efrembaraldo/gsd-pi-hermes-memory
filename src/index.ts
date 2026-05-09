@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
   const dbManager = new DatabaseManager(globalDir);
 
   // Detect project from cwd using shared helper
-  const project = detectProject();
+  const project = detectProject(config.projectsMemoryDir);
 
   // Project-scoped store: ~/.pi/agent/<project_name>/
   const projectConfig = project.memoryDir
@@ -120,9 +120,9 @@ export default function (pi: ExtensionAPI) {
   registerInsightsCommand(pi, store, projectStore, projectName);
   registerSkillsCommand(pi, skillStore);
   registerInterviewCommand(pi, store);
-  registerSwitchProjectCommand(pi);
+  registerSwitchProjectCommand(pi, config);
   registerLearnMemoryCommand(pi);
-  registerSyncMarkdownMemoriesCommand(pi, dbManager, globalDir);
+  registerSyncMarkdownMemoriesCommand(pi, dbManager, globalDir, config.projectsMemoryDir);
   registerPreviewContextCommand(pi, store, projectStore, skillStore, projectName);
 
   // ── 11. SQLite session search + extended memory ──

@@ -18,9 +18,9 @@ export interface ProjectInfo {
  *
  * A "project" is any directory that is not the user's home directory.
  * The project name is the directory's basename.
- * Project-scoped memory is stored at ~/.pi/agent/<projectName>/.
+ * Project-scoped memory is stored at ~/.pi/agent/<projectsMemoryDir>/<projectName>/.
  */
-export function detectProject(cwd?: string): ProjectInfo {
+export function detectProject(projectsMemoryDir = "projects-memory", cwd?: string): ProjectInfo {
   const dir = cwd ?? process.cwd();
   const homeDir = os.homedir();
 
@@ -39,6 +39,6 @@ export function detectProject(cwd?: string): ProjectInfo {
 
   return {
     name,
-    memoryDir: path.join(homeDir, ".pi", "agent", name),
+    memoryDir: path.join(homeDir, ".pi", "agent", projectsMemoryDir, name),
   };
 }

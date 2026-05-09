@@ -7,6 +7,9 @@
 // ─── Entry delimiter (same as Hermes) ───
 export const ENTRY_DELIMITER = "\n§\n";
 
+// ─── Directory names ───
+export const DEFAULT_PROJECTS_MEMORY_DIR = "projects-memory";
+
 // ─── Character limits (not tokens — model-independent) ───
 export const DEFAULT_MEMORY_CHAR_LIMIT = 5000;
 export const DEFAULT_USER_CHAR_LIMIT = 5000;

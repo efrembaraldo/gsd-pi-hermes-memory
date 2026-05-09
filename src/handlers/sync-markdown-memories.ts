@@ -50,13 +50,13 @@ function importEntries(
   }
 }
 
-function scanProjectDirs(agentRoot: string, globalDir: string): Array<{ name: string; memoryFile: string }> {
-  if (!fs.existsSync(agentRoot)) return [];
-  const globalDirName = path.basename(globalDir);
+function scanProjectDirs(agentRoot: string, globalDir: string, projectsMemoryDir = "projects-memory"): Array<{ name: string; memoryFile: string }> {
+  const projectsRoot = path.join(agentRoot, projectsMemoryDir);
+  if (!fs.existsSync(projectsRoot)) return [];
 
-  return fs.readdirSync(agentRoot)
-    .map((name) => ({ name, dir: path.join(agentRoot, name) }))
-    .filter(({ name, dir }) => name !== globalDirName && fs.existsSync(dir) && fs.statSync(dir).isDirectory())
+  return fs.readdirSync(projectsRoot)
+    .map((name) => ({ name, dir: path.join(projectsRoot, name) }))
+    .filter(({ dir }) => fs.existsSync(dir) && fs.statSync(dir).isDirectory())
     .map(({ name, dir }) => ({ name, memoryFile: path.join(dir, MEMORY_FILE) }))
     .filter(({ memoryFile }) => fs.existsSync(memoryFile));
 }
@@ -65,6 +65,7 @@ export function registerSyncMarkdownMemoriesCommand(
   pi: ExtensionAPI,
   dbManager: DatabaseManager,
   globalDir: string,
+  projectsMemoryDir?: string,
 ): void {
   pi.registerCommand('memory-sync-markdown', {
     description: 'Backfill Markdown memories into the SQLite search store',
@@ -100,7 +101,7 @@ export function registerSyncMarkdownMemoriesCommand(
         importFile(globalFailureFile, 'failure');
 
         const agentRoot = path.dirname(globalDir);
-        const projects = scanProjectDirs(agentRoot, globalDir);
+        const projects = scanProjectDirs(agentRoot, globalDir, projectsMemoryDir);
         for (const project of projects) {
           importFile(project.memoryFile, 'memory', project.name);
         }
