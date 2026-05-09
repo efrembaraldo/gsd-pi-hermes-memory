@@ -127,6 +127,48 @@ describe('DatabaseManager', () => {
 
       migratedManager.close();
     });
+
+    it('should migrate legacy target CHECK constraint to allow failure entries', () => {
+      const dbPath = path.join(tmpDir, 'sessions.db');
+      const legacyDb = new Database(dbPath);
+
+      legacyDb.exec(`
+        CREATE TABLE memories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project TEXT,
+          target TEXT NOT NULL CHECK (target IN ('memory', 'user')),
+          category TEXT,
+          content TEXT NOT NULL,
+          failure_reason TEXT,
+          tool_state TEXT,
+          corrected_to TEXT,
+          created DATE NOT NULL,
+          last_referenced DATE NOT NULL
+        );
+      `);
+      legacyDb.prepare(`
+        INSERT INTO memories (project, target, category, content, failure_reason, tool_state, corrected_to, created, last_referenced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(null, 'memory', null, 'existing memory', null, null, null, '2026-05-09', '2026-05-09');
+      legacyDb.close();
+
+      const migratedManager = new DatabaseManager(tmpDir);
+      const migratedDb = migratedManager.getDb();
+
+      assert.doesNotThrow(() => {
+        migratedDb.prepare(`
+          INSERT INTO memories (project, target, category, content, failure_reason, tool_state, corrected_to, created, last_referenced)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(null, 'failure', 'failure', 'failed setup', 'legacy check fixed', null, null, '2026-05-09', '2026-05-09');
+      });
+
+      const rows = migratedDb.prepare(`SELECT target, content FROM memories ORDER BY id ASC`).all() as Array<{ target: string; content: string }>;
+      assert.strictEqual(rows.length, 2);
+      assert.strictEqual(rows[0].content, 'existing memory');
+      assert.strictEqual(rows[1].target, 'failure');
+
+      migratedManager.close();
+    });
   });
 
   describe('close', () => {

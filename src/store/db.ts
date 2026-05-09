@@ -51,9 +51,11 @@ export class DatabaseManager {
       db.exec(SCHEMA_SQL);
     }
 
-    // Extra safety: always ensure the legacy memories columns exist, even when
-    // schema execution succeeds (idempotent on upgraded DBs).
+    // Extra safety: always ensure legacy memories columns exist, then migrate
+    // legacy CHECK(target IN ('memory','user')) constraints to include 'failure'.
     this.ensureMemoriesColumns(db);
+    this.migrateLegacyMemoriesTargetConstraint(db);
+    this.rebuildMemoryFts(db);
 
     return db;
   }
@@ -83,6 +85,56 @@ export class DatabaseManager {
     if (!names.has('corrected_to')) {
       db.exec('ALTER TABLE memories ADD COLUMN corrected_to TEXT');
     }
+  }
+
+  private migrateLegacyMemoriesTargetConstraint(db: Database.Database): void {
+    const tableSqlRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='memories'").get() as { sql?: string } | undefined;
+    const tableSql = tableSqlRow?.sql ?? '';
+    if (!tableSql) return;
+
+    // Legacy schema allowed only memory/user. New schema must allow failure too.
+    const hasLegacyTargetCheck = /target\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*target\s+IN\s*\(\s*'memory'\s*,\s*'user'\s*\)\s*\)/i.test(tableSql);
+    if (!hasLegacyTargetCheck) return;
+
+    const tx = db.transaction(() => {
+      db.exec('PRAGMA foreign_keys = OFF');
+
+      db.exec(`
+        CREATE TABLE memories_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project TEXT,
+          target TEXT NOT NULL CHECK (target IN ('memory', 'user', 'failure')),
+          category TEXT CHECK (category IN ('failure', 'correction', 'insight', 'preference', 'convention', 'tool-quirk')),
+          content TEXT NOT NULL,
+          failure_reason TEXT,
+          tool_state TEXT,
+          corrected_to TEXT,
+          created DATE NOT NULL,
+          last_referenced DATE NOT NULL
+        );
+      `);
+
+      db.exec(`
+        INSERT INTO memories_new (id, project, target, category, content, failure_reason, tool_state, corrected_to, created, last_referenced)
+        SELECT id, project, target, category, content, failure_reason, tool_state, corrected_to, created, last_referenced
+        FROM memories;
+      `);
+
+      db.exec('DROP TABLE memories');
+      db.exec('ALTER TABLE memories_new RENAME TO memories');
+
+      db.exec('PRAGMA foreign_keys = ON');
+    });
+
+    tx();
+  }
+
+  private rebuildMemoryFts(db: Database.Database): void {
+    const ftsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'").get() as { name?: string } | undefined;
+    if (!ftsTable) return;
+
+    // Keep FTS index consistent after table rebuild/migrations.
+    db.exec("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')");
   }
 
   /**
