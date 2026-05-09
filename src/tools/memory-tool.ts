@@ -8,10 +8,141 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { MemoryStore } from "../store/memory-store.js";
+import { DatabaseManager } from "../store/db.js";
+import {
+  formatFailureMemoryContent,
+  removeSyncedMemories,
+  replaceSyncedMemories,
+  syncMemoryEntry,
+} from "../store/sqlite-memory-store.js";
 import { MEMORY_TOOL_DESCRIPTION } from "../constants.js";
-import type { MemoryCategory } from "../types.js";
+import type { MemoryCategory, MemoryResult } from "../types.js";
 
-export function registerMemoryTool(pi: ExtensionAPI, store: MemoryStore, projectStore: MemoryStore | null): void {
+function appendSyncWarning(result: MemoryResult, warning: string): MemoryResult {
+  const warnings = [...(((result as any).warnings ?? []) as string[]), warning];
+  const message = result.message ? `${result.message} Warning: ${warning}` : warning;
+  return {
+    ...result,
+    message,
+    warning,
+    warnings,
+  } as MemoryResult;
+}
+
+function sqliteProjectFor(rawTarget: "memory" | "user" | "project" | "failure", projectName?: string | null): string | null | undefined {
+  if (rawTarget === "project") return projectName?.trim() || null;
+  if (rawTarget === "memory") return null;
+  if (rawTarget === "user") return null;
+  if (rawTarget === "failure") return null;
+  return undefined;
+}
+
+function sqliteTargetFor(rawTarget: "memory" | "user" | "project" | "failure"): "memory" | "user" | "failure" {
+  if (rawTarget === "project") return "memory";
+  return rawTarget;
+}
+
+async function syncAddToSqlite(
+  rawTarget: "memory" | "user" | "project" | "failure",
+  content: string,
+  category: MemoryCategory | undefined,
+  failureReason: string | undefined,
+  dbManager: DatabaseManager | null,
+  projectName?: string | null,
+): Promise<string | null> {
+  if (!dbManager) return null;
+
+  try {
+    const sqliteTarget = sqliteTargetFor(rawTarget);
+    const sqliteProject = sqliteProjectFor(rawTarget, projectName);
+
+    if (rawTarget === "failure") {
+      const failureCategory = category ?? "failure";
+      syncMemoryEntry(dbManager, {
+        content: formatFailureMemoryContent(content, {
+          category: failureCategory,
+          failureReason,
+        }),
+        target: "failure",
+        project: sqliteProject ?? null,
+        category: failureCategory,
+        failureReason,
+      });
+      return null;
+    }
+
+    syncMemoryEntry(dbManager, {
+      content,
+      target: sqliteTarget,
+      project: sqliteProject ?? null,
+    });
+    return null;
+  } catch (err) {
+    return `Saved to Markdown, but SQLite search sync failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function syncReplaceToSqlite(
+  rawTarget: "memory" | "user" | "project" | "failure",
+  oldText: string,
+  newContent: string,
+  dbManager: DatabaseManager | null,
+  projectName?: string | null,
+): Promise<string | null> {
+  if (!dbManager) return null;
+
+  try {
+    const sqliteTarget = sqliteTargetFor(rawTarget);
+    const sqliteProject = sqliteProjectFor(rawTarget, projectName);
+    const syncResult = replaceSyncedMemories(dbManager, oldText, {
+      content: newContent,
+      target: sqliteTarget,
+      project: sqliteProject,
+    });
+
+    if (syncResult.matched === 0) {
+      return "Saved to Markdown, but no matching SQLite memory row was updated. Run /memory-sync-markdown if search results look stale.";
+    }
+
+    return null;
+  } catch (err) {
+    return `Saved to Markdown, but SQLite search sync failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function syncRemoveFromSqlite(
+  rawTarget: "memory" | "user" | "project" | "failure",
+  oldText: string,
+  dbManager: DatabaseManager | null,
+  projectName?: string | null,
+): Promise<string | null> {
+  if (!dbManager) return null;
+
+  try {
+    const sqliteTarget = sqliteTargetFor(rawTarget);
+    const sqliteProject = sqliteProjectFor(rawTarget, projectName);
+    const syncResult = removeSyncedMemories(dbManager, oldText, {
+      target: sqliteTarget,
+      project: sqliteProject,
+    });
+
+    if (syncResult.matched === 0) {
+      return "Saved to Markdown, but no matching SQLite memory row was removed. Run /memory-sync-markdown if search results look stale.";
+    }
+
+    return null;
+  } catch (err) {
+    return `Saved to Markdown, but SQLite search sync failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+export function registerMemoryTool(
+  pi: ExtensionAPI,
+  store: MemoryStore,
+  projectStore: MemoryStore | null,
+  dbManager: DatabaseManager | null = null,
+  projectName?: string | null,
+): void {
   pi.registerTool({
     name: "memory",
     label: "Memory",
@@ -62,7 +193,8 @@ export function registerMemoryTool(pi: ExtensionAPI, store: MemoryStore, project
       // After the guard above, activeStore is guaranteed non-null when rawTarget === 'project'
       const store_ = activeStore!;
 
-      let result;
+      let result: MemoryResult;
+      let syncWarning: string | null = null;
       switch (action) {
         case "add":
           if (!content) {
@@ -86,8 +218,14 @@ export function registerMemoryTool(pi: ExtensionAPI, store: MemoryStore, project
               category: memoryCategory,
               failureReason: failure_reason,
             });
+            if (result.success) {
+              syncWarning = await syncAddToSqlite(rawTarget, content, memoryCategory, failure_reason, dbManager, projectName);
+            }
           } else {
             result = await store_.add(target, content);
+            if (result.success) {
+              syncWarning = await syncAddToSqlite(rawTarget, content, undefined, undefined, dbManager, projectName);
+            }
           }
           break;
 
@@ -121,6 +259,9 @@ export function registerMemoryTool(pi: ExtensionAPI, store: MemoryStore, project
             };
           }
           result = await store_.replace(target, old_text, content);
+          if (result.success) {
+            syncWarning = await syncReplaceToSqlite(rawTarget, old_text, content, dbManager, projectName);
+          }
           break;
 
         case "remove":
@@ -139,6 +280,9 @@ export function registerMemoryTool(pi: ExtensionAPI, store: MemoryStore, project
             };
           }
           result = await store_.remove(target, old_text);
+          if (result.success) {
+            syncWarning = await syncRemoveFromSqlite(rawTarget, old_text, dbManager, projectName);
+          }
           break;
 
         default:
@@ -148,9 +292,16 @@ export function registerMemoryTool(pi: ExtensionAPI, store: MemoryStore, project
           };
       }
 
+      if (syncWarning && result.success) {
+        result = appendSyncWarning(result, syncWarning);
+      }
+
       // Tag project results so the caller knows the scope
       if (rawTarget === "project" && result.success) {
-        (result as any).target = "project";
+        result = {
+          ...result,
+          target: "project",
+        };
       }
 
       return {

@@ -45,6 +45,8 @@ import { registerInterviewCommand } from "./handlers/interview.js";
 import { registerSwitchProjectCommand } from "./handlers/switch-project.js";
 import { registerIndexSessionsCommand } from "./handlers/index-sessions.js";
 import { registerLearnMemoryCommand } from "./handlers/learn-memory.js";
+import { registerSyncMarkdownMemoriesCommand } from "./handlers/sync-markdown-memories.js";
+import { registerPreviewContextCommand } from "./handlers/preview-context.js";
 import { loadConfig } from "./config.js";
 import { detectProject } from "./project.js";
 
@@ -90,8 +92,8 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── 3. Register the memory tool (with project store) ──
-  registerMemoryTool(pi, store, projectStore);
+  // ── 3. Register the memory tool (with project store + SQLite sync) ──
+  registerMemoryTool(pi, store, projectStore, dbManager, projectName);
 
   // ── 4. Register the skill tool ──
   registerSkillTool(pi, skillStore);
@@ -109,7 +111,7 @@ export default function (pi: ExtensionAPI) {
   registerConsolidateCommand(pi, store);
 
   // ── 8. Setup correction detection ──
-  setupCorrectionDetector(pi, store, projectStore, config);
+  setupCorrectionDetector(pi, store, projectStore, config, dbManager);
 
   // ── 9. Setup skill auto-trigger ──
   setupSkillAutoTrigger(pi, store, skillStore, config);
@@ -120,6 +122,8 @@ export default function (pi: ExtensionAPI) {
   registerInterviewCommand(pi, store);
   registerSwitchProjectCommand(pi);
   registerLearnMemoryCommand(pi);
+  registerSyncMarkdownMemoriesCommand(pi, dbManager, globalDir);
+  registerPreviewContextCommand(pi, store, projectStore, skillStore, projectName);
 
   // ── 11. SQLite session search + extended memory ──
   registerSessionSearchTool(pi, dbManager);

@@ -53,7 +53,9 @@ export interface MemoryResult {
   success: boolean;
   error?: string;
   message?: string;
-  target?: "memory" | "user" | "failure";
+  warning?: string;
+  warnings?: string[];
+  target?: "memory" | "user" | "failure" | "project";
   entries?: string[];
   usage?: string;
   entry_count?: number;

@@ -1,0 +1,136 @@
+/**
+ * Markdown memory sync command — /memory-sync-markdown imports existing
+ * Markdown-backed memories into the SQLite search store.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import { DatabaseManager } from '../store/db.js';
+import {
+  parseMarkdownMemoryEntry,
+  syncMemoryEntry,
+} from '../store/sqlite-memory-store.js';
+import { ENTRY_DELIMITER, MEMORY_FILE, USER_FILE } from '../constants.js';
+
+interface BackfillCounters {
+  filesScanned: number;
+  entriesScanned: number;
+  imported: number;
+  skipped: number;
+  warnings: string[];
+}
+
+function readEntries(filePath: string): string[] {
+  if (!fs.existsSync(filePath)) return [];
+  const raw = fs.readFileSync(filePath, 'utf-8').trim();
+  if (!raw) return [];
+  return raw.split(ENTRY_DELIMITER).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function importEntries(
+  dbManager: DatabaseManager,
+  counters: BackfillCounters,
+  entries: string[],
+  target: 'memory' | 'user' | 'failure',
+  project: string | null = null,
+): void {
+  for (const rawEntry of entries) {
+    counters.entriesScanned++;
+    try {
+      const parsed = parseMarkdownMemoryEntry(rawEntry, target, project);
+      const result = syncMemoryEntry(dbManager, parsed);
+      if (result.action === 'inserted') counters.imported++;
+      else counters.skipped++;
+    } catch (err) {
+      counters.warnings.push(
+        `${path.basename(project ?? 'global')}/${target}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+function scanProjectDirs(agentRoot: string, globalDir: string): Array<{ name: string; memoryFile: string }> {
+  if (!fs.existsSync(agentRoot)) return [];
+  const globalDirName = path.basename(globalDir);
+
+  return fs.readdirSync(agentRoot)
+    .map((name) => ({ name, dir: path.join(agentRoot, name) }))
+    .filter(({ name, dir }) => name !== globalDirName && fs.existsSync(dir) && fs.statSync(dir).isDirectory())
+    .map(({ name, dir }) => ({ name, memoryFile: path.join(dir, MEMORY_FILE) }))
+    .filter(({ memoryFile }) => fs.existsSync(memoryFile));
+}
+
+export function registerSyncMarkdownMemoriesCommand(
+  pi: ExtensionAPI,
+  dbManager: DatabaseManager,
+  globalDir: string,
+): void {
+  pi.registerCommand('memory-sync-markdown', {
+    description: 'Backfill Markdown memories into the SQLite search store',
+    handler: async (_args, ctx: ExtensionCommandContext) => {
+      const counters: BackfillCounters = {
+        filesScanned: 0,
+        entriesScanned: 0,
+        imported: 0,
+        skipped: 0,
+        warnings: [],
+      };
+
+      ctx.ui.notify('🔄 Scanning Markdown memory files for SQLite backfill...', 'info');
+
+      try {
+        const globalMemoryFile = path.join(globalDir, MEMORY_FILE);
+        const globalUserFile = path.join(globalDir, USER_FILE);
+        const globalFailureFile = path.join(globalDir, 'failures.md');
+
+        const importFile = (
+          filePath: string,
+          target: 'memory' | 'user' | 'failure',
+          project: string | null = null,
+        ) => {
+          if (!fs.existsSync(filePath)) return;
+          counters.filesScanned++;
+          const entries = readEntries(filePath);
+          importEntries(dbManager, counters, entries, target, project);
+        };
+
+        importFile(globalMemoryFile, 'memory');
+        importFile(globalUserFile, 'user');
+        importFile(globalFailureFile, 'failure');
+
+        const agentRoot = path.dirname(globalDir);
+        const projects = scanProjectDirs(agentRoot, globalDir);
+        for (const project of projects) {
+          importFile(project.memoryFile, 'memory', project.name);
+        }
+
+        let output = `\n✅ Markdown → SQLite sync complete!\n\n`;
+        output += `📊 Results:\n`;
+        output += `├─ Files scanned: ${counters.filesScanned}\n`;
+        output += `├─ Entries scanned: ${counters.entriesScanned}\n`;
+        output += `├─ Imported into SQLite: ${counters.imported}\n`;
+        output += `└─ Skipped as duplicates: ${counters.skipped}\n`;
+
+        if (projects.length > 0) {
+          output += `\n📁 Project memories scanned: ${projects.length}\n`;
+        }
+
+        if (counters.warnings.length > 0) {
+          output += `\n⚠️ Warnings (${counters.warnings.length}):\n`;
+          for (const warning of counters.warnings.slice(0, 5)) {
+            output += `├─ ${warning}\n`;
+          }
+          if (counters.warnings.length > 5) {
+            output += `└─ ... and ${counters.warnings.length - 5} more\n`;
+          }
+        }
+
+        output += `\n💡 Re-running this command is safe — existing SQLite rows are de-duplicated.`;
+        ctx.ui.notify(output, 'info');
+      } catch (err) {
+        ctx.ui.notify(`❌ Markdown sync failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      }
+    },
+  });
+}
