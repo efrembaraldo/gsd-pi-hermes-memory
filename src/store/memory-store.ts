@@ -424,13 +424,19 @@ export class MemoryStore {
     }
   }
 
-  /** Atomic write: temp file + fs.rename() — same crash-safety as Hermes. */
+  /**
+   * Atomic write: temp file + fs.rename().
+   * Creates temp files in the same directory as the target to avoid
+   * cross-device rename errors (EXDEV) when os.tmpdir() is on a different
+   * drive than the memory directory (common on Windows).
+   */
   private async saveToDisk(target: "memory" | "user" | "failure"): Promise<void> {
     const filePath = this.pathFor(target);
     const entries = this.entriesFor(target);
     const content = entries.length ? entries.join(ENTRY_DELIMITER) : "";
 
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-memory-"));
+    // Use the memory directory for temp files so rename stays on the same device
+    const tmpDir = await fs.mkdtemp(path.join(this.memoryDir, ".tmp-"));
     const tmpPath = path.join(tmpDir, "write.tmp");
 
     try {
@@ -440,7 +446,7 @@ export class MemoryStore {
       try { await fs.unlink(tmpPath); } catch { /* ignore */ }
       throw err;
     } finally {
-      try { await fs.rmdir(tmpDir); } catch { /* ignore */ }
+      try { await fs.rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
 }
