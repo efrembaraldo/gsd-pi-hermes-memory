@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { registerPreviewContextCommand } from "../../src/handlers/preview-context.js";
+import { MEMORY_POLICY_PROMPT } from "../../src/constants.js";
 
 describe("registerPreviewContextCommand", () => {
   function setup(opts: {
@@ -9,6 +10,7 @@ describe("registerPreviewContextCommand", () => {
     skillIndex?: string;
     projectName?: string;
     withProjectStore?: boolean;
+    memoryMode?: "policy-only" | "legacy-inject";
   }) {
     const commands: { name: string; handler: Function }[] = [];
     const notifyCalls: { message: string; severity: string }[] = [];
@@ -37,6 +39,7 @@ describe("registerPreviewContextCommand", () => {
       projectStore,
       skillStore,
       opts.projectName ?? "demo-project",
+      opts.memoryMode ?? "policy-only",
     );
 
     return {
@@ -57,13 +60,33 @@ describe("registerPreviewContextCommand", () => {
     assert.ok(typeof handler === "function");
   });
 
-  it("shows all available blocks", async () => {
+  it("shows policy-only context by default", async () => {
+    const { handler, ctx, notifyCalls } = setup({
+      memoryBlock: "<memory-context>MEM</memory-context>",
+      projectBlock: "<memory-context>PROJECT</memory-context>",
+      skillIndex: "<memory-context>SKILLS</memory-context>",
+      withProjectStore: true,
+    });
+
+    await handler({}, ctx);
+    assert.strictEqual(notifyCalls.length, 1);
+    const out = notifyCalls[0].message;
+    assert.match(out, /Mode: policy-only/);
+    assert.match(out, /Full Markdown memories are NOT injected/);
+    assert.match(out, /memory_search/);
+    assert.match(out, /target="failure"/);
+    assert.ok(out.includes(MEMORY_POLICY_PROMPT));
+    assert.match(out, /Blocks shown: 1/);
+  });
+
+  it("shows all available blocks in legacy mode", async () => {
     const { handler, ctx, notifyCalls } = setup({
       memoryBlock: "<memory-context>MEM</memory-context>",
       projectBlock: "<memory-context>PROJECT</memory-context>",
       skillIndex: "<memory-context>SKILLS</memory-context>",
       withProjectStore: true,
       projectName: "pi-hermes-memory",
+      memoryMode: "legacy-inject",
     });
 
     await handler({}, ctx);
@@ -82,6 +105,7 @@ describe("registerPreviewContextCommand", () => {
       projectBlock: "",
       skillIndex: "",
       withProjectStore: false,
+      memoryMode: "legacy-inject",
     });
 
     await handler({}, ctx);

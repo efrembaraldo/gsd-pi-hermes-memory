@@ -88,7 +88,7 @@ export function registerLearnMemoryCommand(pi: ExtensionAPI): void {
         lines.push("  /memory-switch-project List all project memories");
         lines.push("  /memory-index-sessions Import past sessions for search");
         lines.push("  /memory-sync-markdown Backfill Markdown memories into SQLite");
-        lines.push("  /memory-preview-context Show injected memory/skill prompt blocks");
+        lines.push("  /memory-preview-context Show memory policy or legacy prompt blocks");
       }
 
       if (section.startsWith("✅")) {
@@ -116,14 +116,17 @@ export function registerLearnMemoryCommand(pi: ExtensionAPI): void {
         lines.push("  ║          🔄 How Memory Flows                 ║");
         lines.push("  ╚══════════════════════════════════════════════╝");
         lines.push("");
-        lines.push("  1. Session starts     → Core memory + recent failures injected");
-        lines.push("  2. During conversation → Agent saves to Markdown memory");
-        lines.push("  3. Successful saves   → Best-effort SQLite search sync");
+        lines.push("  1. Session starts     → Compact memory policy is injected");
+        lines.push("  2. During conversation → Agent searches memory when useful");
+        lines.push("  3. Agent saves        → Markdown memory + best-effort SQLite sync");
         lines.push("  4. Every 10 turns     → Background review saves items");
         lines.push("  5. On correction      → Immediate save as [correction] category");
         lines.push("  6. On failure         → Saves what failed + why");
         lines.push("  7. When full          → Auto-consolidation merges");
         lines.push("  8. Session ends       → Final flush");
+        lines.push("");
+        lines.push("  Legacy mode: set memoryMode=\"legacy-inject\" to restore full");
+        lines.push("  MEMORY.md, USER.md, project memory, failure, and skill prompt blocks.");
       }
 
       if (section.startsWith("🏗️")) {
@@ -132,21 +135,26 @@ export function registerLearnMemoryCommand(pi: ExtensionAPI): void {
         lines.push("  ║          🏗️ Two-Tier Architecture            ║");
         lines.push("  ╚══════════════════════════════════════════════╝");
         lines.push("");
-        lines.push("  Always in Context (5,000 chars each)");
+        lines.push("  Default Prompt Context");
         lines.push("  ┌─────────────────────────────────────┐");
-        lines.push("  │ MEMORY.md — Facts, conventions      │");
-        lines.push("  │ USER.md   — Who you are             │");
-        lines.push("  │ failures.md — Recent failures (7d)  │");
-        lines.push("  │ Project memory — When cwd matches   │");
+        lines.push("  │ <memory-policy> only                │");
+        lines.push("  │ Explains when to use memory_search  │");
+        lines.push("  │ Memory is context, not instruction  │");
+        lines.push("  │ Repo/tool evidence wins             │");
         lines.push("  └─────────────────────────────────────┘");
         lines.push("");
-        lines.push("  Searchable on Demand (SQLite mirror/store)");
+        lines.push("  Searchable on Demand");
         lines.push("  ┌─────────────────────────────────────┐");
+        lines.push("  │ MEMORY.md / USER.md / failures.md   │");
+        lines.push("  │ projects-memory/<project>/MEMORY.md │");
         lines.push("  │ session_search(\"auth flow\")         │");
         lines.push("  │ memory_search(\"testing patterns\")   │");
         lines.push("  │ /memory-sync-markdown (backfill old md)│");
         lines.push("  │ memory_search(\"auth\", cat:\"failure\")│");
         lines.push("  └─────────────────────────────────────┘");
+        lines.push("");
+        lines.push("  Legacy mode can still inject full memory/skill blocks for users");
+        lines.push("  who explicitly opt into memoryMode=\"legacy-inject\".");
       }
 
       if (section.startsWith("❓")) {

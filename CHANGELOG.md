@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-11
+
+### Added
+
+- **Policy-only memory prompt by default**: The system prompt now appends a compact `<memory-policy>` instead of dumping full Markdown memory, project memory, recent failures, and the skill index into every new session.
+- **Legacy injection escape hatch**: Set `memoryMode: "legacy-inject"` to restore the previous full prompt-injection behavior for users who rely on it.
+- **Prompt context builder**: Centralized prompt assembly in `buildPromptContext()` with tests for policy-only and legacy modes.
+- **Expanded `/memory-preview-context`**: Shows the active policy-only prompt by default, or the full legacy memory/skill blocks when legacy mode is enabled.
+- **v0.7 docs and task plan**: Added the token-aware memory policy plan and future retrieval/router phases.
+
+### Changed
+
+- Memory is described and handled as searchable context, not always-on authority.
+- The memory policy now accurately reflects current tool behavior:
+  - `memory_search` searches durable user, global, project-scoped, and failure memories.
+  - `session_search` searches indexed past conversation messages.
+  - `skill` supports `list`, `view`, `create`, `patch`, `edit`, and `delete`.
+- Category-filter guidance now avoids missing ordinary user/project/global memories; category filters are reserved for categorized failure/lesson memories.
+- README, roadmap, in-app learning guide, Mermaid diagrams, and generated SVGs now describe policy-only as the default and `legacy-inject` as opt-in.
+- Content scanner warnings now mention search and legacy prompt injection instead of implying all memory is always injected.
+
+### Preserved From Recent PRs
+
+- Project-scoped memory remains under `~/.pi/agent/projects-memory/<project>/`.
+- Windows-safe atomic writes still use temp files next to their target files and `fs.rm()` cleanup.
+- `reviewRecentMessages` and `flushRecentMessages` remain configurable and independently applied.
+
+### Tests
+
+- 362 automated tests across 23 test files.
+- Added policy prompt tests covering default policy-only behavior, legacy prompt assembly, accurate memory tool guidance, and stale wording regressions.
+
 ## [0.6.5] - 2026-05-03
 
 ### Fixed

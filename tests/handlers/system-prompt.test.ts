@@ -19,6 +19,7 @@ import type { MemoryConfig } from "../../src/types.js";
 let TEST_MEMORY_DIR = "";
 
 const testConfig = (): MemoryConfig => ({
+  memoryMode: "legacy-inject",
   memoryCharLimit: 5000,
   userCharLimit: 5000,
   projectCharLimit: 5000,
@@ -27,6 +28,12 @@ const testConfig = (): MemoryConfig => ({
   flushOnCompact: true,
   flushOnShutdown: true,
   flushMinTurns: 6,
+  autoConsolidate: true,
+  correctionDetection: true,
+  failureInjectionEnabled: true,
+  failureInjectionMaxAgeDays: 7,
+  failureInjectionMaxEntries: 5,
+  nudgeToolCalls: 15,
   memoryDir: TEST_MEMORY_DIR,
 });
 

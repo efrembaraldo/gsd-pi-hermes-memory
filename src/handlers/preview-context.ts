@@ -1,11 +1,13 @@
 /**
- * Preview context command — /memory-preview-context shows the memory/skill blocks
- * that are injected into the system prompt.
+ * Preview context command — /memory-preview-context shows the policy-only prompt
+ * or legacy memory/skill blocks appended to the system prompt.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { MemoryStore } from "../store/memory-store.js";
 import { SkillStore } from "../store/skill-store.js";
+import { MEMORY_POLICY_PROMPT } from "../constants.js";
+import type { MemoryConfig } from "../types.js";
 
 export function registerPreviewContextCommand(
   pi: ExtensionAPI,
@@ -13,10 +15,29 @@ export function registerPreviewContextCommand(
   projectStore: MemoryStore | null,
   skillStore: SkillStore,
   projectName: string,
+  memoryMode: MemoryConfig["memoryMode"] = "policy-only",
 ): void {
   pi.registerCommand("memory-preview-context", {
-    description: "Preview the memory/skill context blocks injected into the system prompt",
+    description: "Preview the memory policy or legacy memory/skill context blocks",
     handler: async (_args, ctx) => {
+      if (memoryMode === "policy-only") {
+        const lines: string[] = [];
+        lines.push("");
+        lines.push("  ╔══════════════════════════════════════════════╗");
+        lines.push("  ║        Injected Context Preview             ║");
+        lines.push("  ╚══════════════════════════════════════════════╝");
+        lines.push("");
+        lines.push("  Mode: policy-only");
+        lines.push("  This is the memory policy appended to the system prompt.");
+        lines.push("  Full Markdown memories are NOT injected in this mode.");
+        lines.push("");
+        lines.push(MEMORY_POLICY_PROMPT);
+        lines.push("");
+        lines.push("  Blocks shown: 1");
+        ctx.ui.notify(lines.join("\n"), "info");
+        return;
+      }
+
       const memoryBlock = store.formatForSystemPrompt();
       const projectBlock = projectStore ? projectStore.formatProjectBlock(projectName) : "";
       const skillIndex = await skillStore.formatIndexForSystemPrompt();

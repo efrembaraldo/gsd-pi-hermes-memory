@@ -71,7 +71,7 @@ export function scanContent(content: string): string | null {
   // Check threat patterns
   for (const { pattern, id } of MEMORY_THREAT_PATTERNS) {
     if (pattern.test(content)) {
-      return `Blocked: content matches threat pattern '${id}'. Memory entries are injected into the system prompt and must not contain injection or exfiltration payloads.`;
+      return `Blocked: content matches threat pattern '${id}'. Memory entries may be surfaced through search or legacy prompt injection and must not contain injection or exfiltration payloads.`;
     }
   }
 
