@@ -283,10 +283,14 @@ export class SkillStore {
 
   // ─── Internal helpers ───
 
-  /** Atomic write: temp file + rename (same crash-safety as MemoryStore) */
+  /**
+   * Atomic write: temp file + rename.
+   * Creates temp files in the skills directory to avoid cross-device
+   * rename errors (EXDEV) on Windows when os.tmpdir() is on a different drive.
+   */
   private async atomicWrite(fileName: string, content: string): Promise<void> {
     const filePath = path.join(this.skillsDir, fileName);
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-skill-"));
+    const tmpDir = await fs.mkdtemp(path.join(this.skillsDir, ".tmp-"));
     const tmpPath = path.join(tmpDir, "write.tmp");
 
     try {
@@ -296,7 +300,7 @@ export class SkillStore {
       try { await fs.unlink(tmpPath); } catch { /* ignore */ }
       throw err;
     } finally {
-      try { await fs.rmdir(tmpDir); } catch { /* ignore */ }
+      try { await fs.rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
 }
