@@ -6,6 +6,7 @@ import {
   DEFAULT_MEMORY_CHAR_LIMIT,
   DEFAULT_USER_CHAR_LIMIT,
   DEFAULT_PROJECT_CHAR_LIMIT,
+  DEFAULT_PROJECTS_MEMORY_DIR,
   DEFAULT_NUDGE_INTERVAL,
   DEFAULT_FLUSH_MIN_TURNS,
   DEFAULT_NUDGE_TOOL_CALLS,
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   failureInjectionMaxAgeDays: DEFAULT_FAILURE_INJECTION_MAX_AGE_DAYS,
   failureInjectionMaxEntries: DEFAULT_FAILURE_INJECTION_MAX_ENTRIES,
   nudgeToolCalls: DEFAULT_NUDGE_TOOL_CALLS,
+  projectsMemoryDir: DEFAULT_PROJECTS_MEMORY_DIR,
 };
 
 export const DEFAULT_CONFIG_PATH = path.join(
@@ -68,6 +70,7 @@ export function loadConfig(): MemoryConfig {
       if (typeof parsed.nudgeToolCalls === "number") config.nudgeToolCalls = parsed.nudgeToolCalls;
       if (typeof parsed.projectCharLimit === "number") config.projectCharLimit = parsed.projectCharLimit;
       if (typeof parsed.memoryDir === "string") config.memoryDir = parsed.memoryDir;
+      if (typeof parsed.projectsMemoryDir === "string") config.projectsMemoryDir = parsed.projectsMemoryDir;
       return config;
     }
   } catch {

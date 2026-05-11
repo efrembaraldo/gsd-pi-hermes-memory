@@ -20,6 +20,7 @@ describe("loadConfig", () => {
     assert.strictEqual(config.failureInjectionEnabled, true);
     assert.strictEqual(config.failureInjectionMaxAgeDays, 7);
     assert.strictEqual(config.failureInjectionMaxEntries, 5);
+    assert.strictEqual(config.projectsMemoryDir, "projects-memory");
   });
 
   it("overrides defaults when config file exists", () => {
@@ -33,6 +34,7 @@ describe("loadConfig", () => {
       failureInjectionEnabled: false,
       failureInjectionMaxAgeDays: 30,
       failureInjectionMaxEntries: 2,
+      projectsMemoryDir: "my-memory",
     }));
     const config = loadConfig();
     assert.strictEqual(config.memoryCharLimit, 3000);
@@ -42,6 +44,7 @@ describe("loadConfig", () => {
     assert.strictEqual(config.failureInjectionEnabled, false);
     assert.strictEqual(config.failureInjectionMaxAgeDays, 30);
     assert.strictEqual(config.failureInjectionMaxEntries, 2);
+    assert.strictEqual(config.projectsMemoryDir, "my-memory");
     // Unset values use defaults
     assert.strictEqual(config.userCharLimit, 5000);
     assert.strictEqual(config.reviewEnabled, true);
@@ -60,6 +63,7 @@ describe("loadConfig", () => {
     assert.strictEqual(config.failureInjectionEnabled, true);
     assert.strictEqual(config.failureInjectionMaxAgeDays, 7);
     assert.strictEqual(config.failureInjectionMaxEntries, 5);
+    assert.strictEqual(config.projectsMemoryDir, "projects-memory");
     fs.rmSync(DEFAULT_CONFIG_PATH);
   });
 

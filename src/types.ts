@@ -27,6 +27,8 @@ export interface MemoryConfig {
   flushRecentMessages?: number;
   /** Override memory directory. Default: ~/.pi/agent/memory */
   memoryDir?: string;
+  /** Directory for project-scoped memory (relative to ~/.pi/agent). Default: "projects-memory" */
+  projectsMemoryDir?: string;
   /** Auto-consolidate when memory is full instead of returning error. Default: true */
   autoConsolidate: boolean;
   /** Detect user corrections and trigger immediate memory save. Default: true */

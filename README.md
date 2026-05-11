@@ -104,7 +104,7 @@ The extension stores memory at two levels:
 | Tier | Location | What goes here | Injected when |
 |---|---|---|---|
 | **Global** | `~/.pi/agent/memory/` | Facts that apply everywhere — your name, preferences, OS, tools | Always (every session) |
-| **Project** | `~/.pi/agent/<project>/` | Facts scoped to one codebase — architecture decisions, API quirks, team norms | When cwd matches the project |
+| **Project** | `~/.pi/agent/projects-memory/<project>/` | Facts scoped to one codebase — architecture decisions, API quirks, team norms | When cwd matches the project |
 
 Both tiers are injected into the system prompt under separate `<memory-context>` blocks.
 
@@ -393,6 +393,7 @@ Create `~/.pi/agent/hermes-memory-config.json`:
 | `userCharLimit` | `5000` | Max characters in USER.md |
 | `projectCharLimit` | `5000` | Max characters in project-scoped MEMORY.md |
 | `memoryDir` | `~/.pi/agent/memory` | Custom directory for memory files |
+| `projectsMemoryDir` | `projects-memory` | Subdirectory under `~/.pi/agent/` for project-scoped memory |
 | `nudgeInterval` | `10` | Turns between auto-reviews |
 | `nudgeToolCalls` | `15` | Tool calls between auto-reviews (OR with turns) |
 | `reviewRecentMessages` | `0` | Recent messages included in background review (`0` = all) |
@@ -410,13 +411,21 @@ Create `~/.pi/agent/hermes-memory-config.json`:
 ## Where Data Lives
 
 ```
-~/.pi/agent/memory/
-├── MEMORY.md          ← Agent's personal notes (env facts, patterns, lessons)
-├── USER.md            ← User profile (name, preferences, habits)
-├── sessions.db        ← SQLite database (session history + extended memory)
-└── skills/
-    ├── debug-typescript-errors.md
-    └── deploy-checklist.md
+~/.pi/agent/
+├── projects-memory/       ← ALL project-scoped memories (one subfolder per project)
+│   ├── my-project/
+│   │   └── MEMORY.md
+│   └── another-project/
+│       └── MEMORY.md
+├── memory/                ← Global memory
+│   ├── MEMORY.md          ← Agent's personal notes (env facts, patterns, lessons)
+│   ├── USER.md            ← User profile (name, preferences, habits)
+│   ├── sessions.db        ← SQLite database (session history + extended memory)
+│   └── skills/
+│       ├── debug-typescript-errors.md
+│       └── deploy-checklist.md
+├── hermes-memory-config.json
+└── ...
 ```
 
 These are plain markdown files. You can read and edit them directly if you want to curate what the agent remembers. Memory entries are separated by `§` (section sign). Skills use standard SKILL.md format with frontmatter.
