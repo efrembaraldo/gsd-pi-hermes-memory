@@ -8,12 +8,15 @@ sequenceDiagram
     Note over Pi,SQL: ── Session Start ──
     Pi->>Extension: session_start event
     Extension->>MD: loadFromDisk() — MEMORY.md + USER.md + failures.md + skills/
-    Extension-->>Extension: Capture frozen snapshot (memory + failures + skill index)
+    Extension-->>Extension: Load searchable memory stores
 
-    Note over Pi,SQL: ── System Prompt Injection ──
+    Note over Pi,SQL: ── System Prompt Context ──
     Pi->>Extension: before_agent_start event
-    Extension-->>Pi: systemPrompt + frozen Markdown memory blocks
-    Note right of Pi: Prompt context comes from Markdown core memory
+    Extension-->>Pi: systemPrompt + compact memory policy
+    Note right of Pi: Default mode does NOT inject full Markdown memory
+    opt memoryMode = legacy-inject
+        Extension-->>Pi: systemPrompt + legacy memory blocks
+    end
 
     Note over Pi,SQL: ── Agent Loop (memory add) ──
     User->>Pi: "Remember I prefer vim"

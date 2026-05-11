@@ -8,6 +8,7 @@ import { loadConfig, DEFAULT_CONFIG_PATH } from "../src/config.js";
 describe("loadConfig", () => {
   it("returns defaults when no config file exists", () => {
     const config = loadConfig();
+    assert.strictEqual(config.memoryMode, "policy-only");
     assert.strictEqual(config.memoryCharLimit, 5000);
     assert.strictEqual(config.userCharLimit, 5000);
     assert.strictEqual(config.nudgeInterval, 10);
@@ -28,6 +29,7 @@ describe("loadConfig", () => {
     fs.mkdirSync(path.dirname(DEFAULT_CONFIG_PATH), { recursive: true });
     fs.writeFileSync(DEFAULT_CONFIG_PATH, JSON.stringify({
       memoryCharLimit: 3000,
+      memoryMode: "legacy-inject",
       nudgeInterval: 15,
       reviewRecentMessages: 25,
       flushRecentMessages: 40,
@@ -37,6 +39,7 @@ describe("loadConfig", () => {
       projectsMemoryDir: "my-memory",
     }));
     const config = loadConfig();
+    assert.strictEqual(config.memoryMode, "legacy-inject");
     assert.strictEqual(config.memoryCharLimit, 3000);
     assert.strictEqual(config.nudgeInterval, 15);
     assert.strictEqual(config.reviewRecentMessages, 25);
@@ -57,6 +60,7 @@ describe("loadConfig", () => {
     fs.writeFileSync(DEFAULT_CONFIG_PATH, JSON.stringify({ reviewEnabled: false }));
     const config = loadConfig();
     assert.strictEqual(config.reviewEnabled, false);
+    assert.strictEqual(config.memoryMode, "policy-only");
     assert.strictEqual(config.memoryCharLimit, 5000); // default
     assert.strictEqual(config.reviewRecentMessages, 0);
     assert.strictEqual(config.flushRecentMessages, 0);
@@ -136,7 +140,18 @@ describe("loadConfig", () => {
     }));
     const config = loadConfig();
     assert.strictEqual(config.memoryCharLimit, 1000);
+    assert.strictEqual(config.memoryMode, "policy-only");
     assert.strictEqual(config.reviewEnabled, true);
+    fs.rmSync(DEFAULT_CONFIG_PATH);
+  });
+
+  it("ignores invalid memoryMode values", () => {
+    fs.mkdirSync(path.dirname(DEFAULT_CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(DEFAULT_CONFIG_PATH, JSON.stringify({
+      memoryMode: "invalid",
+    }));
+    const config = loadConfig();
+    assert.strictEqual(config.memoryMode, "policy-only");
     fs.rmSync(DEFAULT_CONFIG_PATH);
   });
 });

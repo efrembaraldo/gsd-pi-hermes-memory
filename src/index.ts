@@ -49,6 +49,7 @@ import { registerSyncMarkdownMemoriesCommand } from "./handlers/sync-markdown-me
 import { registerPreviewContextCommand } from "./handlers/preview-context.js";
 import { loadConfig } from "./config.js";
 import { detectProject } from "./project.js";
+import { buildPromptContext } from "./prompt-context.js";
 
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
@@ -61,7 +62,7 @@ export default function (pi: ExtensionAPI) {
   // Detect project from cwd using shared helper
   const project = detectProject(config.projectsMemoryDir);
 
-  // Project-scoped store: ~/.pi/agent/<project_name>/
+  // Project-scoped store: ~/.pi/agent/<projectsMemoryDir>/<project_name>/
   const projectConfig = project.memoryDir
     ? { ...config, memoryCharLimit: config.projectCharLimit, memoryDir: project.memoryDir }
     : { ...config, memoryDir: undefined };
@@ -74,20 +75,13 @@ export default function (pi: ExtensionAPI) {
     if (projectStore) await projectStore.loadFromDisk();
   });
 
-  // ── 2. Inject frozen snapshot + skill index + project memory into system prompt ──
+  // ── 2. Inject memory policy by default; legacy mode keeps full frozen memory blocks ──
   pi.on("before_agent_start", async (event, _ctx) => {
-    const memoryBlock = store.formatForSystemPrompt();
-    const skillIndex = await skillStore.formatIndexForSystemPrompt();
-    const projectBlock = projectStore ? projectStore.formatProjectBlock(projectName) : "";
+    const promptContext = await buildPromptContext(config, store, projectStore, skillStore, projectName);
 
-    const parts: string[] = [];
-    if (memoryBlock) parts.push(memoryBlock);
-    if (projectBlock) parts.push(projectBlock);
-    if (skillIndex) parts.push(skillIndex);
-
-    if (parts.length > 0) {
+    if (promptContext) {
       return {
-        systemPrompt: event.systemPrompt + "\n\n" + parts.join("\n\n"),
+        systemPrompt: event.systemPrompt + "\n\n" + promptContext,
       };
     }
   });
@@ -123,7 +117,7 @@ export default function (pi: ExtensionAPI) {
   registerSwitchProjectCommand(pi, config);
   registerLearnMemoryCommand(pi);
   registerSyncMarkdownMemoriesCommand(pi, dbManager, globalDir, config.projectsMemoryDir);
-  registerPreviewContextCommand(pi, store, projectStore, skillStore, projectName);
+  registerPreviewContextCommand(pi, store, projectStore, skillStore, projectName, config.memoryMode);
 
   // ── 11. SQLite session search + extended memory ──
   registerSessionSearchTool(pi, dbManager);

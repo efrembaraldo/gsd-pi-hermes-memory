@@ -17,6 +17,7 @@ import {
 } from "./constants.js";
 
 const DEFAULT_CONFIG: MemoryConfig = {
+  memoryMode: "policy-only",
   memoryCharLimit: DEFAULT_MEMORY_CHAR_LIMIT,
   userCharLimit: DEFAULT_USER_CHAR_LIMIT,
   projectCharLimit: DEFAULT_PROJECT_CHAR_LIMIT,
@@ -53,6 +54,7 @@ export function loadConfig(): MemoryConfig {
       const isNonNegativeNumber = (value: unknown): value is number => (
         typeof value === "number" && Number.isFinite(value) && value >= 0
       );
+      if (parsed.memoryMode === "policy-only" || parsed.memoryMode === "legacy-inject") config.memoryMode = parsed.memoryMode;
       if (typeof parsed.memoryCharLimit === "number") config.memoryCharLimit = parsed.memoryCharLimit;
       if (typeof parsed.userCharLimit === "number") config.userCharLimit = parsed.userCharLimit;
       if (typeof parsed.nudgeInterval === "number") config.nudgeInterval = parsed.nudgeInterval;
