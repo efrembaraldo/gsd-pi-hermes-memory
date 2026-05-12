@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-12
+
 ### Added
 
-- **Configurable memory policy prompt**: `policy-only` mode now supports `memoryPolicyStyle` (`full`, `compact`, `custom`, or `none`) and `memoryPolicyCustomText`. The default `full` style preserves the existing v0.7 policy prompt behavior.
+- **Configurable memory policy prompt** ([#26](https://github.com/chandra447/pi-hermes-memory/pull/26)): `policy-only` mode now supports `memoryPolicyStyle` (`full`, `compact`, `custom`, or `none`) and `memoryPolicyCustomText`. The default `full` style preserves the existing v0.7 policy prompt behavior.
+
+### Fixed
+
+- **Bun runtime SQLite compatibility** ([#27](https://github.com/chandra447/pi-hermes-memory/pull/27), [#25](https://github.com/chandra447/pi-hermes-memory/issues/25), [#24](https://github.com/chandra447/pi-hermes-memory/issues/24)): Added a runtime fallback from `better-sqlite3` to `bun:sqlite` in `src/store/db.ts` so memory and search features do not crash when loaded in Bun contexts.
+- **Safer DB initialization across runtimes** ([#27](https://github.com/chandra447/pi-hermes-memory/pull/27)): PRAGMA setup now consistently enables `journal_mode=WAL` and `foreign_keys=ON` for each connection, and legacy target-constraint migration handling is hardened to avoid partial schema updates.
 
 ## [0.7.2] - 2026-05-11
 
