@@ -119,7 +119,7 @@ System Prompt
 └─────────────────────────────────────────┘
 ```
 
-Set `"memoryPolicyStyle"` to `"compact"`, `"custom"`, or `"none"` to change only the policy text while keeping policy-only mode. Set `"memoryMode": "legacy-inject"` to restore the old behavior that injects MEMORY.md, USER.md, project memory, recent failures, and the skill index into the prompt.
+Set `"memoryPolicyStyle"` to `"full"`, `"compact"`, `"custom"`, or `"none"` to choose policy verbosity while keeping policy-only mode. Set `"memoryMode": "legacy-inject"` to restore the old behavior that injects MEMORY.md, USER.md, project memory, recent failures, and the skill index into the prompt.
 
 ## Failure Memory
 
