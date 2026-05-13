@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-13
+
 ### Added
 
 - **Configurable correction detection patterns**: Strong, weak, and negative correction patterns plus weak-pattern directive words can now be overridden with optional config fields. Omitted fields preserve the existing defaults.
