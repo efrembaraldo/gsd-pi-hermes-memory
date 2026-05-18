@@ -37,6 +37,19 @@ pi install npm:pi-hermes-memory
 /learn-memory-tool
 ```
 
+## Upgrade Notes (v0.7.10)
+
+If you’re upgrading from older versions, startup now auto-migrates extension data safely:
+
+- legacy extension root: `~/.pi/agent/memory` → `~/.pi/agent/pi-hermes-memory`
+- legacy flat skills: `~/.pi/agent/pi-hermes-memory/skills/*.md` → `~/.pi/agent/pi-hermes-memory/skills/<slug>/SKILL.md`
+
+This resolves Pi skill index conflicts like:
+
+- `name "..." does not match parent directory "skills"`
+
+No manual action is needed. Launch Pi once after upgrade to let migration/normalization run.
+
 ## Features
 
 | Feature | What happens |
