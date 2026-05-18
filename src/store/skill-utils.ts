@@ -6,6 +6,19 @@ export interface ParsedSkillFile {
   body: string;
 }
 
+function parseScalar(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === "string") return parsed;
+    } catch {
+      // fall through to raw trimmed
+    }
+  }
+  return trimmed;
+}
+
 export function parseFrontmatter(raw: string): ParsedSkillFile {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return { meta: {}, body: raw.trim() };
@@ -15,7 +28,7 @@ export function parseFrontmatter(raw: string): ParsedSkillFile {
     const idx = line.indexOf(":");
     if (idx > 0) {
       const key = line.slice(0, idx).trim();
-      const value = line.slice(idx + 1).trim();
+      const value = parseScalar(line.slice(idx + 1));
       meta[key] = value;
     }
   }
@@ -23,18 +36,22 @@ export function parseFrontmatter(raw: string): ParsedSkillFile {
   return { meta, body: match[2].trim() };
 }
 
+function yamlDoubleQuoted(value: string): string {
+  return JSON.stringify(value);
+}
+
 export function formatFrontmatter(doc: Pick<SkillDocument, "name" | "displayName" | "description" | "version" | "created" | "updated" | "body">): string {
   const lines = [
     "---",
-    `name: ${doc.name}`,
-    `description: ${doc.description}`,
+    `name: ${yamlDoubleQuoted(doc.name)}`,
+    `description: ${yamlDoubleQuoted(doc.description)}`,
     `version: ${doc.version}`,
-    `created: ${doc.created}`,
-    `updated: ${doc.updated}`,
+    `created: ${yamlDoubleQuoted(doc.created)}`,
+    `updated: ${yamlDoubleQuoted(doc.updated)}`,
   ];
 
   if (doc.displayName && doc.displayName.trim() && doc.displayName.trim() !== doc.name) {
-    lines.push(`display_name: ${doc.displayName.trim()}`);
+    lines.push(`display_name: ${yamlDoubleQuoted(doc.displayName.trim())}`);
   }
 
   lines.push("---", doc.body);

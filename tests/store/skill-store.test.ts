@@ -82,9 +82,9 @@ describe("SkillStore", { concurrency: 1 }, () => {
       assert.strictEqual(result.skillId, "global:debug-typescript-errors");
       const filePath = path.join(GLOBAL_SKILLS_DIR, "debug-typescript-errors", "SKILL.md");
       const raw = await readFile(filePath);
-      assert.ok(raw.includes("name: debug-typescript-errors"));
-      assert.ok(raw.includes("display_name: Debug TypeScript Errors"));
-      assert.ok(raw.includes("description: Step-by-step"));
+      assert.ok(raw.includes('name: "debug-typescript-errors"'));
+      assert.ok(raw.includes('display_name: "Debug TypeScript Errors"'));
+      assert.ok(raw.includes('description: "Step-by-step approach to debugging TS errors"'));
       assert.ok(raw.includes("version: 1"));
       assert.ok(raw.includes("## Procedure"));
     });
@@ -102,8 +102,8 @@ describe("SkillStore", { concurrency: 1 }, () => {
       assert.strictEqual(result.skillId, "project:demo-project:release-app");
       const filePath = path.join(PROJECT_SKILLS_DIR, "release-app", "SKILL.md");
       const raw = await readFile(filePath);
-      assert.ok(raw.includes("name: release-app"));
-      assert.ok(raw.includes("display_name: Release App"));
+      assert.ok(raw.includes('name: "release-app"'));
+      assert.ok(raw.includes('display_name: "Release App"'));
       assert.ok(raw.includes("Run pnpm deploy"));
     });
 
@@ -430,9 +430,9 @@ describe("SkillStore", { concurrency: 1 }, () => {
       assert.strictEqual(result.migrated, 1);
       const migratedPath = path.join(GLOBAL_SKILLS_DIR, "legacy-skill", "SKILL.md");
       const raw = await readFile(migratedPath);
-      assert.ok(raw.includes("name: legacy-skill"));
-      assert.ok(raw.includes("display_name: Legacy Skill"));
-      assert.ok(raw.includes("description: Legacy migrated skill"));
+      assert.ok(raw.includes('name: "legacy-skill"'));
+      assert.ok(raw.includes('display_name: "Legacy Skill"'));
+      assert.ok(raw.includes('description: "Legacy migrated skill"'));
       assert.ok(raw.includes("1. Do the legacy thing"));
     });
 
@@ -498,7 +498,7 @@ describe("SkillStore", { concurrency: 1 }, () => {
       assert.strictEqual(result.migrated, 1);
       await assert.rejects(fs.access(path.join(GLOBAL_SKILLS_DIR, "flat-legacy.md")));
       const migrated = await readFile(path.join(GLOBAL_SKILLS_DIR, "flat-legacy", "SKILL.md"));
-      assert.ok(migrated.includes("description: Flat legacy skill"));
+      assert.ok(migrated.includes('description: "Flat legacy skill"'));
     });
 
     it("does not write the sentinel when warnings occur, so migration can retry", async () => {
