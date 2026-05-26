@@ -106,6 +106,8 @@ export class DatabaseManager {
 
     // Enable WAL mode + FK enforcement for each connection.
     db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA wal_autocheckpoint = 100');
+    db.exec('PRAGMA journal_size_limit = 5242880');
     db.exec('PRAGMA foreign_keys = ON');
 
     // Create tables and triggers
@@ -251,6 +253,7 @@ export class DatabaseManager {
    */
   close(): void {
     if (this.db) {
+      try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* best effort */ }
       this.db.close();
       this.db = null;
     }
