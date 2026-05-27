@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-05-27
+
+### Fixed
+
+- **Memory store maintenance for issue #52** ([#59](https://github.com/chandra447/pi-hermes-memory/pull/59), [#52](https://github.com/chandra447/pi-hermes-memory/issues/52)): failure memories now respect configured caps and exact dedupe, `memory remove` can accept the formatted text copied directly from `memory_search` results, and successful memory mutations return concise metadata instead of dumping large entry lists.
+
+### Changed
+
+- Failure-memory writes now use the same guarded add path as other memory targets, so overflow handling and validation stay consistent across stores.
+- The SQLite memory mirror now normalizes pasted search-result text the same way as the Markdown source of truth, keeping remove/replace behavior aligned.
+
 ## [0.7.12] - 2026-05-27
 
 ### Fixed
