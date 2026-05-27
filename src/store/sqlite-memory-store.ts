@@ -1,4 +1,5 @@
 import { DatabaseManager } from './db.js';
+import { isFts5QueryError, normalizeFts5Query } from './fts-query.js';
 import type { MemoryCategory } from '../types.js';
 
 const MEMORY_SELECT_COLUMNS = `
@@ -551,19 +552,6 @@ export function removeExactSyncedMemories(
 }
 
 /**
- * Escape a string for FTS5 query syntax.
- * Wraps the query in double quotes to treat it as a literal phrase.
- */
-function escapeFts5Query(query: string): string {
-  // If the query already contains FTS5 operators (OR, AND, NOT, NEAR), leave it as-is
-  if (/\b(OR|AND|NOT|NEAR)\b/.test(query)) {
-    return query;
-  }
-  // Otherwise, wrap in double quotes to treat as literal phrase
-  return `"${query.replace(/"/g, '""')}"`;
-}
-
-/**
  * Search memories using FTS5.
  */
 export function searchMemories(
@@ -571,6 +559,10 @@ export function searchMemories(
   query: string,
   options: { project?: string; target?: string; category?: MemoryCategory; limit?: number } = {}
 ): SqliteMemoryEntry[] {
+  if (query.trim().length === 0) {
+    return [];
+  }
+
   const db = dbManager.getDb();
   const { project, target, category, limit = 10 } = options;
 
@@ -578,8 +570,12 @@ export function searchMemories(
   const params: unknown[] = [];
 
   // FTS5 match via subquery with escaped query
+  const normalizedQuery = normalizeFts5Query(query);
+  if (normalizedQuery.length === 0) {
+    return [];
+  }
   conditions.push('m.id IN (SELECT rowid FROM memory_fts WHERE memory_fts MATCH ?)');
-  params.push(escapeFts5Query(query));
+  params.push(normalizedQuery);
 
   if (project !== undefined) {
     if (project === null) {
@@ -611,20 +607,27 @@ export function searchMemories(
   `;
   params.push(limit);
 
-  const rows = db.prepare(sql).all(...params) as Array<{
-    id: number;
-    project: string | null;
-    target: string;
-    category: string | null;
-    content: string;
-    failure_reason: string | null;
-    tool_state: string | null;
-    corrected_to: string | null;
-    created: string;
-    last_referenced: string;
-  }>;
+  try {
+    const rows = db.prepare(sql).all(...params) as Array<{
+      id: number;
+      project: string | null;
+      target: string;
+      category: string | null;
+      content: string;
+      failure_reason: string | null;
+      tool_state: string | null;
+      corrected_to: string | null;
+      created: string;
+      last_referenced: string;
+    }>;
 
-  return rows.map(mapRow);
+    return rows.map(mapRow);
+  } catch (err) {
+    if (isFts5QueryError(err)) {
+      return [];
+    }
+    throw err;
+  }
 }
 
 /**

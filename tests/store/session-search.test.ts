@@ -35,6 +35,8 @@ describe('session-search', () => {
         { id: `${id}-msg-2`, role: 'assistant', content: 'To set up Prisma, install the package and run prisma init. Then configure your DATABASE_URL in .env', timestamp: '2026-05-03T00:01:30Z' },
         { id: `${id}-msg-3`, role: 'user', content: 'What about database migrations?', timestamp: '2026-05-03T00:02:00Z' },
         { id: `${id}-msg-4`, role: 'assistant', content: 'Use prisma migrate dev to create migrations. This generates SQL files and applies them.', timestamp: '2026-05-03T00:02:30Z' },
+        { id: `${id}-msg-5`, role: 'user', content: 'What about gpu timeout issue debugging?', timestamp: '2026-05-03T00:03:00Z' },
+        { id: `${id}-msg-6`, role: 'assistant', content: 'This exact phrase memory search example helps verify phrase queries.', timestamp: '2026-05-03T00:03:30Z' },
       ],
       ...overrides,
     };
@@ -110,12 +112,56 @@ describe('session-search', () => {
       assert.strictEqual(results.length, 0);
     });
 
+    it('should match multi-word queries without requiring an exact phrase', () => {
+      indexSession(dbManager, createTestSession());
+
+      const results = searchSessions(dbManager, 'gpu issue');
+      assert.ok(results.length > 0);
+      assert.ok(results.some((r) => r.content.includes('gpu timeout issue')));
+    });
+
+    it('should ignore lowercase connector words in natural-language queries', () => {
+      indexSession(dbManager, createTestSession());
+
+      const results = searchSessions(dbManager, 'gpu and issue');
+      assert.ok(results.length > 0);
+      assert.ok(results.some((r) => r.content.includes('gpu timeout issue')));
+    });
+
+    it('should preserve explicit quoted phrase searches', () => {
+      indexSession(dbManager, createTestSession());
+
+      const results = searchSessions(dbManager, '"memory search"');
+      assert.ok(results.length > 0);
+      assert.ok(results.every((r) => r.content.includes('memory search')));
+    });
+
+    it('should preserve valid operator queries', () => {
+      indexSession(dbManager, createTestSession());
+
+      const results = searchSessions(dbManager, 'Prisma OR gpu');
+      assert.ok(results.length >= 2);
+      assert.ok(results.some((r) => r.content.includes('Prisma')));
+      assert.ok(results.some((r) => r.content.includes('gpu timeout issue')));
+    });
+
     it('should handle malformed FTS5 queries gracefully', () => {
       indexSession(dbManager, createTestSession());
 
       // Malformed FTS5 query should not throw
       const results = searchSessions(dbManager, 'AND OR NOT');
       assert.ok(Array.isArray(results));
+    });
+
+    it('should handle unmatched quotes gracefully', () => {
+      indexSession(dbManager, createTestSession());
+
+      const results = searchSessions(dbManager, 'issue "timeout');
+      assert.ok(Array.isArray(results));
+    });
+
+    it('should return empty for blank queries', () => {
+      assert.deepStrictEqual(searchSessions(dbManager, '   '), []);
     });
   });
 
@@ -126,7 +172,7 @@ describe('session-search', () => {
 
     it('should return correct count after indexing', () => {
       indexSession(dbManager, createTestSession());
-      assert.strictEqual(getIndexedMessageCount(dbManager), 4);
+      assert.strictEqual(getIndexedMessageCount(dbManager), 6);
     });
   });
 });

@@ -1,17 +1,5 @@
 import { DatabaseManager } from './db.js';
-
-/**
- * Escape a string for FTS5 query syntax.
- * Wraps the query in double quotes to treat it as a literal phrase.
- */
-function escapeFts5Query(query: string): string {
-  // If the query already contains FTS5 operators (OR, AND, NOT, NEAR), leave it as-is
-  if (/\b(OR|AND|NOT|NEAR)\b/.test(query)) {
-    return query;
-  }
-  // Otherwise, wrap in double quotes to treat as literal phrase
-  return `"${query.replace(/"/g, '""')}"`;
-}
+import { isFts5QueryError, normalizeFts5Query } from './fts-query.js';
 
 /**
  * Search result from session history.
@@ -52,6 +40,10 @@ export function searchSessions(
   query: string,
   options: SessionSearchOptions = {}
 ): SessionSearchResult[] {
+  if (query.trim().length === 0) {
+    return [];
+  }
+
   const db = dbManager.getDb();
   const { limit = 10, project, role, since } = options;
 
@@ -60,8 +52,12 @@ export function searchSessions(
   const params: unknown[] = [];
 
   // FTS5 match condition — use subquery for reliable rowid matching
+  const normalizedQuery = normalizeFts5Query(query);
+  if (normalizedQuery.length === 0) {
+    return [];
+  }
   conditions.push('m.rowid IN (SELECT rowid FROM message_fts WHERE message_fts MATCH ?)');
-  params.push(escapeFts5Query(query));
+  params.push(normalizedQuery);
 
   // Project filter
   if (project) {
@@ -119,8 +115,10 @@ export function searchSessions(
       snippet: row.snippet,
     }));
   } catch (err) {
-    // FTS5 can throw on malformed queries — return empty results
-    return [];
+    if (isFts5QueryError(err)) {
+      return [];
+    }
+    throw err;
   }
 }
 

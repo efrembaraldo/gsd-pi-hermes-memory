@@ -154,6 +154,9 @@ describe('sqlite-memory-store', () => {
     beforeEach(() => {
       addMemory(dbManager, 'prefers pnpm over npm');
       addMemory(dbManager, 'uses Prisma with PostgreSQL', 'memory', 'project-a');
+      addMemory(dbManager, 'debugged gpu timeout issue after driver update');
+      addMemory(dbManager, 'memory search indexing notes');
+      addMemory(dbManager, 'exact phrase memory search example');
       addMemory(dbManager, 'name: Chandrateja', 'user');
       addMemory(dbManager, 'timezone: AEST', 'user');
     });
@@ -168,6 +171,31 @@ describe('sqlite-memory-store', () => {
       const results = searchMemories(dbManager, 'Prisma');
       assert.ok(results.length > 0);
       assert.ok(results.some(r => r.content.includes('Prisma')));
+    });
+
+    it('should match multi-word queries without requiring an exact phrase', () => {
+      const results = searchMemories(dbManager, 'gpu issue');
+      assert.ok(results.length > 0);
+      assert.ok(results.some((r) => r.content.includes('gpu timeout issue')));
+    });
+
+    it('should ignore lowercase connector words in natural-language queries', () => {
+      const results = searchMemories(dbManager, 'gpu and issue');
+      assert.ok(results.length > 0);
+      assert.ok(results.some((r) => r.content.includes('gpu timeout issue')));
+    });
+
+    it('should preserve explicit quoted phrase searches', () => {
+      const results = searchMemories(dbManager, '"memory search"');
+      assert.ok(results.length > 0);
+      assert.ok(results.every((r) => r.content.includes('memory search')));
+    });
+
+    it('should preserve valid operator queries', () => {
+      const results = searchMemories(dbManager, 'pnpm OR AEST');
+      assert.ok(results.length >= 2);
+      assert.ok(results.some((r) => r.content.includes('pnpm')));
+      assert.ok(results.some((r) => r.content.includes('AEST')));
     });
 
     it('should limit results', () => {
@@ -189,6 +217,22 @@ describe('sqlite-memory-store', () => {
 
     it('should return empty for no matches', () => {
       const results = searchMemories(dbManager, 'nonexistent-xyz');
+      assert.strictEqual(results.length, 0);
+    });
+
+    it('should return empty for blank queries', () => {
+      assert.deepStrictEqual(searchMemories(dbManager, '   '), []);
+    });
+
+    it('should not throw on unmatched quotes', () => {
+      assert.doesNotThrow(() => {
+        const results = searchMemories(dbManager, 'issue "timeout');
+        assert.ok(Array.isArray(results));
+      });
+    });
+
+    it('should return empty for malformed operator queries', () => {
+      const results = searchMemories(dbManager, 'AND OR NOT');
       assert.strictEqual(results.length, 0);
     });
   });
