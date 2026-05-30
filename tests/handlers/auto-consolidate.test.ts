@@ -76,6 +76,15 @@ describe("triggerConsolidation", () => {
     assert.ok(result.error!.includes("exit"), "error should mention exit code");
   });
 
+  it("surfaces timeout-style child termination clearly", async () => {
+    const pi = createMockPi({ code: 143, stdout: "", stderr: "", killed: true } as any);
+    const result = await triggerConsolidation(pi, mockStore, "memory", undefined, 60000);
+
+    assert.strictEqual(result.consolidated, false);
+    assert.match(result.error!, /terminated/i);
+    assert.match(result.error!, /60000ms/);
+  });
+
   it("returns { consolidated: false } when pi.exec throws", async () => {
     const crashPi = {
       on: () => {},
@@ -110,6 +119,69 @@ describe("triggerConsolidation", () => {
     assert.ok(prompt.includes("Target: 'project'"), "prompt should tell the child agent to use target='project'");
   });
 
+  it("retries once without overrides when the override subprocess fails for model resolution reasons", async () => {
+    const pi = {
+      on: () => {},
+      exec: async (...args: any[]) => {
+        execCalls.push(args);
+        if (execCalls.length === 1) {
+          return { code: 1, stdout: "", stderr: "model not found" };
+        }
+        return { code: 0, stdout: "Consolidated", stderr: "" };
+      },
+      registerTool: () => {},
+      registerCommand: () => {},
+    } as any;
+
+    const result = await triggerConsolidation(
+      pi,
+      mockStore,
+      "memory",
+      undefined,
+      60000,
+      "memory",
+      { llmModelOverride: "openrouter/deepseek/deepseek-v4-flash" },
+    );
+
+    assert.strictEqual(result.consolidated, true);
+    assert.strictEqual(execCalls.length, 2, "should retry once without overrides");
+    assert.deepStrictEqual(execCalls[0][1].slice(0, 6), [
+      "-p",
+      "--no-session",
+      "--model",
+      "openrouter/deepseek/deepseek-v4-flash",
+      "--thinking",
+      "off",
+    ]);
+    assert.deepStrictEqual(execCalls[1][1].slice(0, 2), ["-p", "--no-session"]);
+    assert.strictEqual(execCalls[1][1].length, 3, "fallback retry should drop model/thinking overrides");
+  });
+
+  it("does not retry generic consolidation failures that are unrelated to override resolution", async () => {
+    const pi = {
+      on: () => {},
+      exec: async (...args: any[]) => {
+        execCalls.push(args);
+        return { code: 1, stdout: "", stderr: "memory tool returned no changes" };
+      },
+      registerTool: () => {},
+      registerCommand: () => {},
+    } as any;
+
+    const result = await triggerConsolidation(
+      pi,
+      mockStore,
+      "memory",
+      undefined,
+      60000,
+      "memory",
+      { llmModelOverride: "openrouter/deepseek/deepseek-v4-flash" },
+    );
+
+    assert.strictEqual(result.consolidated, false);
+    assert.strictEqual(execCalls.length, 1, "should not retry generic consolidation failures");
+  });
+
   it("handles empty entries gracefully", async () => {
     const emptyStore = {
       getMemoryEntries: () => [],
@@ -132,7 +204,7 @@ describe("registerConsolidateCommand", () => {
 
   it("includes project memory when a project store is available", async () => {
     let handler: any;
-    let notification = "";
+    const notifications: string[] = [];
     let projectReloaded = false;
 
     const pi = {
@@ -156,7 +228,7 @@ describe("registerConsolidateCommand", () => {
     registerConsolidateCommand(pi, mockStore, 60000, projectStore, "demo-project");
     await handler({}, {
       signal: undefined,
-      ui: { notify: (message: string) => { notification = message; } },
+      ui: { notify: (message: string) => { notifications.push(message); } },
     });
 
     assert.strictEqual(execCalls.length, 3, "should consolidate memory, user, and project stores");
@@ -165,7 +237,65 @@ describe("registerConsolidateCommand", () => {
     assert.ok(projectPrompt.includes("project fact"), "project prompt should include project entries");
     assert.ok(projectPrompt.includes("Target: 'project'"), "project prompt should use target='project'");
     assert.ok(projectReloaded, "project store should reload after consolidation");
-    assert.ok(notification.includes("project:demo-project: ✅ consolidated"), "notification should include project result");
+    assert.ok(notifications.some((message) => message.includes("Starting memory consolidation")), "should show an initial progress notification");
+    assert.ok(notifications.some((message) => message.includes("⏳ Consolidating memory")), "should show per-target progress");
+    const finalNotification = notifications[notifications.length - 1] ?? "";
+    assert.ok(finalNotification.includes("project:demo-project: ✅ consolidated"), "final notification should include project result");
+  });
+
+  it("uses a longer timeout floor for the manual consolidate command", async () => {
+    let handler: any;
+
+    const pi = {
+      on: () => {},
+      exec: async (...args: any[]) => {
+        execCalls.push(args);
+        return { code: 0, stdout: "Done", stderr: "" };
+      },
+      registerTool: () => {},
+      registerCommand: (_name: string, command: any) => {
+        handler = command.handler;
+      },
+    } as any;
+
+    registerConsolidateCommand(pi, mockStore, 60000);
+    await handler({}, {
+      signal: undefined,
+      ui: { notify: () => {} },
+    });
+
+    for (const call of execCalls) {
+      assert.strictEqual(call[2]?.timeout, 180000);
+    }
+  });
+
+  it("does not throw if the command ctx becomes stale before the final summary notify", async () => {
+    let handler: any;
+
+    const pi = {
+      on: () => {},
+      exec: async (...args: any[]) => {
+        execCalls.push(args);
+        return { code: 0, stdout: "Done", stderr: "" };
+      },
+      registerTool: () => {},
+      registerCommand: (_name: string, command: any) => {
+        handler = command.handler;
+      },
+    } as any;
+
+    registerConsolidateCommand(pi, mockStore, 60000);
+
+    await assert.doesNotReject(async () => {
+      await handler({}, {
+        signal: undefined,
+        ui: {
+          notify: () => {
+            throw new Error("This extension ctx is stale after session replacement or reload.");
+          },
+        },
+      });
+    });
   });
 });
 
