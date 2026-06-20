@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupSessionFlush } from "../../src/handlers/session-flush.js";
+import { resolveChildPiInvocation } from "../../src/handlers/pi-child-process.js";
 import { FLUSH_PROMPT } from "../../src/constants.js";
 import type { MemoryConfig } from "../../src/types.js";
 
@@ -86,6 +87,20 @@ async function emit(
 }
 
 const mockStore = { getMemoryEntries: () => [], getUserEntries: () => [] } as any;
+
+function logicalChildArgs(call: { args: any[] }): string[] {
+  const [cmd, args] = call.args;
+  const logicalArgs = cmd === "pi" ? args : args.slice(1);
+  const expected = resolveChildPiInvocation(logicalArgs);
+  assert.equal(cmd, expected.command);
+  assert.deepEqual(args, expected.args);
+  return logicalArgs;
+}
+
+function flushMessage(call: { args: any[] }): string {
+  const args = logicalChildArgs(call);
+  return args[args.length - 1];
+}
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -203,21 +218,20 @@ describe("setupSessionFlush", () => {
 
     assert.equal(mockPi.execCalls.length, 1);
 
-    const [cmd, args, opts] = mockPi.execCalls[0].args;
-    assert.equal(cmd, "pi");
-    assert.ok(Array.isArray(args));
+    const [, , opts] = mockPi.execCalls[0].args;
+    const args = logicalChildArgs(mockPi.execCalls[0]);
     assert.equal(args[0], "-p");
     assert.equal(args[1], "--no-session");
 
-    // The third arg is the flush message containing the prompt + conversation
-    const flushMessage = args[2];
-    assert.ok(flushMessage.includes(FLUSH_PROMPT), "flush message should contain FLUSH_PROMPT");
-    assert.ok(flushMessage.includes("[USER]"), "flush message should contain [USER] prefix");
+    // The final logical arg is the flush message containing the prompt + conversation
+    const message = args[args.length - 1];
+    assert.ok(message.includes(FLUSH_PROMPT), "flush message should contain FLUSH_PROMPT");
+    assert.ok(message.includes("[USER]"), "flush message should contain [USER] prefix");
     assert.ok(
-      flushMessage.includes("[ASSISTANT]"),
+      message.includes("[ASSISTANT]"),
       "flush message should contain [ASSISTANT] prefix",
     );
-    assert.ok(flushMessage.includes("msg 0"), "flush message should contain conversation text");
+    assert.ok(message.includes("msg 0"), "flush message should contain conversation text");
 
     // Options should include timeout
     assert.ok(opts, "options should be passed");
@@ -236,7 +250,7 @@ describe("setupSessionFlush", () => {
     const ctx = { sessionManager: { getBranch: () => mockBranch(4) } };
     await emit(mockPi.handlers, "session_before_compact", { signal: undefined }, ctx);
 
-    const [, args] = mockPi.execCalls[0].args;
+    const args = logicalChildArgs(mockPi.execCalls[0]);
     assert.deepStrictEqual(
       args.slice(0, 6),
       ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "low"],
@@ -252,9 +266,9 @@ describe("setupSessionFlush", () => {
     const ctx = { sessionManager: { getBranch: () => mockBranch(8) } };
     await emit(mockPi.handlers, "session_before_compact", { signal: undefined }, ctx);
 
-    const flushMessage = mockPi.execCalls[0].args[1][2];
-    assert.ok(flushMessage.includes("msg 0"), "default should include older messages");
-    assert.ok(flushMessage.includes("msg 7"), "default should include latest messages");
+    const message = flushMessage(mockPi.execCalls[0]);
+    assert.ok(message.includes("msg 0"), "default should include older messages");
+    assert.ok(message.includes("msg 7"), "default should include latest messages");
   });
 
   it("Flush limits conversation to recent messages when configured", async () => {
@@ -266,11 +280,11 @@ describe("setupSessionFlush", () => {
     const ctx = { sessionManager: { getBranch: () => mockBranch(8) } };
     await emit(mockPi.handlers, "session_before_compact", { signal: undefined }, ctx);
 
-    const flushMessage = mockPi.execCalls[0].args[1][2];
-    assert.ok(!flushMessage.includes("msg 4"), "window should exclude older messages");
-    assert.ok(flushMessage.includes("msg 5"));
-    assert.ok(flushMessage.includes("msg 6"));
-    assert.ok(flushMessage.includes("msg 7"));
+    const message = flushMessage(mockPi.execCalls[0]);
+    assert.ok(!message.includes("msg 4"), "window should exclude older messages");
+    assert.ok(message.includes("msg 5"));
+    assert.ok(message.includes("msg 6"));
+    assert.ok(message.includes("msg 7"));
   });
 
   it("Flush does not use the review recent-message limit", async () => {
@@ -282,8 +296,8 @@ describe("setupSessionFlush", () => {
     const ctx = { sessionManager: { getBranch: () => mockBranch(8) } };
     await emit(mockPi.handlers, "session_before_compact", { signal: undefined }, ctx);
 
-    const flushMessage = mockPi.execCalls[0].args[1][2];
-    assert.ok(flushMessage.includes("msg 0"), "review limit must not affect flush");
+    const message = flushMessage(mockPi.execCalls[0]);
+    assert.ok(message.includes("msg 0"), "review limit must not affect flush");
   });
 
   // ── Error resilience ────────────────────────────────────────────────
@@ -340,10 +354,10 @@ describe("setupSessionFlush", () => {
     // exec is still called (flush message just has no conversation lines)
     assert.equal(mockPi.execCalls.length, 1);
 
-    const flushMessage = mockPi.execCalls[0].args[1][2];
-    assert.ok(flushMessage.includes(FLUSH_PROMPT));
+    const message = flushMessage(mockPi.execCalls[0]);
+    assert.ok(message.includes(FLUSH_PROMPT));
     // No [USER]/[ASSISTANT] prefixes in empty conversation
-    assert.ok(!flushMessage.includes("[USER]"), "empty branch should have no [USER]");
+    assert.ok(!message.includes("[USER]"), "empty branch should have no [USER]");
   });
 
   it("Concurrent compact + shutdown both flush", async () => {

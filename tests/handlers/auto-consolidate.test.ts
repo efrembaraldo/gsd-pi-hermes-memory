@@ -8,11 +8,26 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { registerConsolidateCommand, triggerConsolidation } from "../../src/handlers/auto-consolidate.js";
+import { resolveChildPiInvocation } from "../../src/handlers/pi-child-process.js";
 import { ENTRY_DELIMITER } from "../../src/constants.js";
 
 // ─── Mock infrastructure ───
 
 let execCalls: any[];
+
+function logicalChildArgs(call: any[]): string[] {
+  const [cmd, args] = call;
+  const logicalArgs = cmd === "pi" ? args : args.slice(1);
+  const expected = resolveChildPiInvocation(logicalArgs);
+  assert.strictEqual(cmd, expected.command);
+  assert.deepStrictEqual(args, expected.args);
+  return logicalArgs;
+}
+
+function childPrompt(call: any[]): string {
+  const args = logicalChildArgs(call);
+  return args[args.length - 1];
+}
 
 function createMockPi(execReturn?: { code: number; stdout: string; stderr: string }) {
   const ret = execReturn ?? { code: 0, stdout: "Consolidated", stderr: "" };
@@ -50,8 +65,7 @@ describe("triggerConsolidation", () => {
     await triggerConsolidation(pi, mockStore, "memory");
 
     assert.strictEqual(execCalls.length, 1, "should call pi.exec once");
-    const [cmd, args] = execCalls[0];
-    assert.strictEqual(cmd, "pi");
+    const args = logicalChildArgs(execCalls[0]);
     assert.ok(args[0] === "-p", "should use -p flag");
     assert.ok(args.includes("--no-session"), "should include --no-session");
 
@@ -105,7 +119,7 @@ describe("triggerConsolidation", () => {
     const pi = createMockPi();
     await triggerConsolidation(pi, mockStore, "user");
 
-    const prompt = execCalls[0][1][execCalls[0][1].length - 1];
+    const prompt = childPrompt(execCalls[0]);
     assert.ok(prompt.includes("user fact 1"), "prompt should include user entries");
     assert.ok(prompt.includes("User Profile"), "prompt should reference user profile");
   });
@@ -114,7 +128,7 @@ describe("triggerConsolidation", () => {
     const pi = createMockPi();
     await triggerConsolidation(pi, mockStore, "failure");
 
-    const prompt = execCalls[0][1][execCalls[0][1].length - 1];
+    const prompt = childPrompt(execCalls[0]);
     assert.ok(prompt.includes("failure lesson 1"), "prompt should include failure entries");
     assert.ok(prompt.includes("Failure Memory"), "prompt should reference failure memory");
     assert.ok(prompt.includes("Target: 'failure'"), "prompt should tell the child agent to use target='failure'");
@@ -124,7 +138,7 @@ describe("triggerConsolidation", () => {
     const pi = createMockPi();
     await triggerConsolidation(pi, mockStore, "memory", undefined, 60000, "project");
 
-    const prompt = execCalls[0][1][execCalls[0][1].length - 1];
+    const prompt = childPrompt(execCalls[0]);
     assert.ok(prompt.includes("old entry 1"), "prompt should include project memory entries");
     assert.ok(prompt.includes("Project Memory"), "prompt should label project memory");
     assert.ok(prompt.includes("Target: 'project'"), "prompt should tell the child agent to use target='project'");
@@ -156,7 +170,7 @@ describe("triggerConsolidation", () => {
 
     assert.strictEqual(result.consolidated, true);
     assert.strictEqual(execCalls.length, 2, "should retry once without overrides");
-    assert.deepStrictEqual(execCalls[0][1].slice(0, 6), [
+    assert.deepStrictEqual(logicalChildArgs(execCalls[0]).slice(0, 6), [
       "-p",
       "--no-session",
       "--model",
@@ -164,8 +178,9 @@ describe("triggerConsolidation", () => {
       "--thinking",
       "off",
     ]);
-    assert.deepStrictEqual(execCalls[1][1].slice(0, 2), ["-p", "--no-session"]);
-    assert.strictEqual(execCalls[1][1].length, 3, "fallback retry should drop model/thinking overrides");
+    const retryArgs = logicalChildArgs(execCalls[1]);
+    assert.deepStrictEqual(retryArgs.slice(0, 2), ["-p", "--no-session"]);
+    assert.strictEqual(retryArgs.length, 3, "fallback retry should drop model/thinking overrides");
   });
 
   it("does not retry generic consolidation failures that are unrelated to override resolution", async () => {
@@ -203,7 +218,7 @@ describe("triggerConsolidation", () => {
     const pi = createMockPi();
     await triggerConsolidation(pi, emptyStore, "memory");
 
-    const prompt = execCalls[0][1][execCalls[0][1].length - 1];
+    const prompt = childPrompt(execCalls[0]);
     assert.ok(prompt.includes("(empty)"), "prompt should show (empty) for empty entries");
   });
 });
@@ -243,11 +258,11 @@ describe("registerConsolidateCommand", () => {
     });
 
     assert.strictEqual(execCalls.length, 4, "should consolidate memory, user, failure, and project stores");
-    const failurePrompt = execCalls[2][1][execCalls[2][1].length - 1];
+    const failurePrompt = childPrompt(execCalls[2]);
     assert.ok(failurePrompt.includes("Failure Memory"), "failure prompt should be labeled");
     assert.ok(failurePrompt.includes("failure lesson 1"), "failure prompt should include failure entries");
     assert.ok(failurePrompt.includes("Target: 'failure'"), "failure prompt should use target='failure'");
-    const projectPrompt = execCalls[3][1][execCalls[3][1].length - 1];
+    const projectPrompt = childPrompt(execCalls[3]);
     assert.ok(projectPrompt.includes("Project Memory"), "project prompt should be labeled");
     assert.ok(projectPrompt.includes("project fact"), "project prompt should include project entries");
     assert.ok(projectPrompt.includes("Target: 'project'"), "project prompt should use target='project'");

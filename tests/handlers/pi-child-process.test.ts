@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildChildPiPromptArgs, execChildPrompt, inheritedExtensionArgs } from "../../src/handlers/pi-child-process.js";
+import { buildChildPiPromptArgs, execChildPrompt, inheritedExtensionArgs, resolveChildPiInvocation } from "../../src/handlers/pi-child-process.js";
+
+function logicalChildArgs(call: { cmd: string; args: string[] }): string[] {
+  const expected = resolveChildPiInvocation(call.cmd === "pi" ? call.args : call.args.slice(1));
+  assert.strictEqual(call.cmd, expected.command);
+  assert.deepStrictEqual(call.args, expected.args);
+  return call.cmd === "pi" ? call.args : call.args.slice(1);
+}
 
 describe("inheritedExtensionArgs", () => {
   it("captures explicit -e and --extension parent args", () => {
@@ -48,6 +55,45 @@ describe("buildChildPiPromptArgs", () => {
   });
 });
 
+describe("resolveChildPiInvocation", () => {
+  it("keeps non-Windows child pi invocations unchanged", () => {
+    const args = ["-p", "--no-session", "hello"];
+
+    assert.deepStrictEqual(
+      resolveChildPiInvocation(args, { platform: "linux" }),
+      { command: "pi", args },
+    );
+  });
+
+  it("runs node.exe with cli.js first on Windows when a Pi CLI path is available", () => {
+    assert.deepStrictEqual(
+      resolveChildPiInvocation(["-p", "--no-session", "hello"], {
+        platform: "win32",
+        execPath: "C:\\Program Files\\nodejs\\node.exe",
+        piCliPath: "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
+      }),
+      {
+        command: "C:\\Program Files\\nodejs\\node.exe",
+        args: [
+          "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
+          "-p",
+          "--no-session",
+          "hello",
+        ],
+      },
+    );
+  });
+
+  it("falls back to the existing pi invocation on Windows if cli.js cannot be resolved", () => {
+    const args = ["-p", "--no-session", "hello"];
+
+    assert.deepStrictEqual(
+      resolveChildPiInvocation(args, { platform: "win32", piCliPath: null }),
+      { command: "pi", args },
+    );
+  });
+});
+
 describe("execChildPrompt", () => {
   it("retries once without overrides when requested and the override subprocess fails for model resolution reasons", async () => {
     const calls: Array<{ cmd: string; args: string[] }> = [];
@@ -69,10 +115,47 @@ describe("execChildPrompt", () => {
     });
 
     assert.strictEqual(result.code, 0);
-    assert.deepStrictEqual(calls.map((call) => call.args), [
+    assert.deepStrictEqual(calls.map(logicalChildArgs), [
       ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", "hello"],
       ["-p", "--no-session", "hello"],
     ]);
+  });
+
+  it("uses the resolved Windows node.exe invocation for both override retry attempts", async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const calls: Array<{ cmd: string; args: string[] }> = [];
+      const pi = {
+        exec: async (cmd: string, args: string[]) => {
+          calls.push({ cmd, args });
+          if (calls.length === 1) {
+            return { code: 1, stdout: "", stderr: "model not found" };
+          }
+          return { code: 0, stdout: "ok", stderr: "" };
+        },
+      };
+
+      const result = await execChildPrompt(pi as any, "hello", {
+        llmModelOverride: "openrouter/deepseek/deepseek-v4-flash",
+      }, {
+        timeoutMs: 30000,
+        retryWithoutOverrides: true,
+      });
+
+      assert.strictEqual(result.code, 0);
+      assert.strictEqual(calls.length, 2);
+      assert.strictEqual(calls[0].cmd, process.execPath);
+      assert.strictEqual(calls[1].cmd, process.execPath);
+      assert.match(calls[0].args[0].replace(/\\/g, "/"), /\/cli\.js$/);
+      assert.match(calls[1].args[0].replace(/\\/g, "/"), /\/cli\.js$/);
+      assert.deepStrictEqual(calls.map((call) => call.args.slice(1)), [
+        ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", "hello"],
+        ["-p", "--no-session", "hello"],
+      ]);
+    } finally {
+      if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    }
   });
 
   it("does not retry generic non-zero child failures that are unrelated to override resolution", async () => {

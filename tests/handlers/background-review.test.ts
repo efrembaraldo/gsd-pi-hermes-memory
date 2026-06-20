@@ -1,6 +1,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert";
 import { setupBackgroundReview } from "../../src/handlers/background-review.js";
+import { resolveChildPiInvocation } from "../../src/handlers/pi-child-process.js";
 
 // ─── Mock infrastructure ───
 
@@ -112,8 +113,18 @@ async function settle(ms = 10) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+function logicalChildArgs(index = execCalls.length - 1): string[] {
+  const [cmd, args] = execCalls[index];
+  const logicalArgs = cmd === "pi" ? args : args.slice(1);
+  const expected = resolveChildPiInvocation(logicalArgs);
+  assert.strictEqual(cmd, expected.command);
+  assert.deepStrictEqual(args, expected.args);
+  return logicalArgs;
+}
+
 function reviewPrompt(index = execCalls.length - 1): string {
-  return execCalls[index][1][2];
+  const args = logicalChildArgs(index);
+  return args[args.length - 1];
 }
 
 // ─── Tests ───
@@ -165,9 +176,7 @@ describe("setupBackgroundReview", () => {
 
     assert.strictEqual(execCalls.length, 1, "exec should be called once at turn 10");
     // Verify it calls pi.exec with review prompt
-    const execArgs = execCalls[0];
-    assert.strictEqual(execArgs[0], "pi", "exec first arg should be 'pi'");
-    const cmdArgs: string[] = execArgs[1];
+    const cmdArgs = logicalChildArgs(0);
     assert.ok(cmdArgs[0] === "-p", "should use -p flag");
     assert.ok(cmdArgs.includes("--no-session"), "should include --no-session");
     const prompt = reviewPrompt(0);
@@ -192,7 +201,7 @@ describe("setupBackgroundReview", () => {
     }
     await settle();
 
-    const cmdArgs: string[] = execCalls[0][1];
+    const cmdArgs = logicalChildArgs(0);
     assert.deepStrictEqual(
       cmdArgs.slice(0, 6),
       ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "minimal"],
