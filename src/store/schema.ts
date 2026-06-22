@@ -3,6 +3,7 @@
  *
  * Tables:
  * - sessions — Pi session metadata
+ * - session_files — indexed JSONL metadata for incremental backfill
  * - messages — all conversation messages
  * - message_fts — FTS5 index for full-text search across messages
  * - memories — extended memory entries (unlimited, searchable)
@@ -24,6 +25,15 @@ export const SCHEMA_SQL = `
     started_at TEXT NOT NULL,
     ended_at TEXT,
     message_count INTEGER DEFAULT 0
+  );
+
+  -- Indexed session file metadata for cheap incremental backfill
+  CREATE TABLE IF NOT EXISTS session_files (
+    path TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    size INTEGER NOT NULL,
+    mtime_ms INTEGER NOT NULL,
+    indexed_at TEXT NOT NULL
   );
 
   -- All messages from all sessions
@@ -102,4 +112,5 @@ export const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
   CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
   CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+  CREATE INDEX IF NOT EXISTS idx_session_files_session_id ON session_files(session_id);
 `;

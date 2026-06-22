@@ -23,6 +23,18 @@ export interface BulkIndexResult {
   sessionsSkipped: number;
   messagesIndexed: number;
   errors: string[];
+  reachedLimit?: boolean;
+}
+
+interface SessionFileMetadata {
+  path: string;
+  size: number;
+  mtimeMs: number;
+}
+
+export interface IncrementalIndexOptions {
+  projectDir?: string;
+  maxFilesToIndex?: number;
 }
 
 /**
@@ -201,10 +213,76 @@ export function indexLiveSession(dbManager: DatabaseManager, sessionManager: Ses
   const sessionFile = sessionManager.getSessionFile?.();
   if (sessionFile && fs.existsSync(sessionFile)) {
     const session = parseSessionFile(sessionFile);
-    if (session) return indexSession(dbManager, session);
+    if (session) {
+      const result = indexSession(dbManager, session);
+      upsertSessionFileMetadata(dbManager, sessionFile, session.id);
+      return result;
+    }
   }
 
   return indexCurrentSession(dbManager, sessionManager);
+}
+
+function getSessionFileMetadata(filePath: string): SessionFileMetadata {
+  const stat = fs.statSync(filePath);
+  return { path: filePath, size: stat.size, mtimeMs: Math.trunc(stat.mtimeMs) };
+}
+
+function getStoredSessionFileMetadata(dbManager: DatabaseManager, filePath: string): { size: number; mtime_ms: number } | undefined {
+  return dbManager.getDb().prepare('SELECT size, mtime_ms FROM session_files WHERE path = ?').get(filePath) as { size: number; mtime_ms: number } | undefined;
+}
+
+function storedSessionFileMatches(dbManager: DatabaseManager, metadata: SessionFileMetadata): boolean {
+  const row = getStoredSessionFileMetadata(dbManager, metadata.path);
+  return Boolean(row && row.size === metadata.size && row.mtime_ms === metadata.mtimeMs);
+}
+
+function upsertSessionFileMetadata(
+  dbManager: DatabaseManager,
+  filePath: string,
+  sessionId: string,
+  metadata = getSessionFileMetadata(filePath),
+  indexedAt = new Date(),
+): void {
+  const db = dbManager.getDb();
+  db.prepare(`
+    INSERT INTO session_files (path, session_id, size, mtime_ms, indexed_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(path) DO UPDATE SET
+      session_id = excluded.session_id,
+      size = excluded.size,
+      mtime_ms = excluded.mtime_ms,
+      indexed_at = excluded.indexed_at
+  `).run(metadata.path, sessionId, metadata.size, metadata.mtimeMs, indexedAt.toISOString());
+}
+
+function emptyBulkIndexResult(): BulkIndexResult {
+  return {
+    sessionsProcessed: 0,
+    sessionsIndexed: 0,
+    sessionsSkipped: 0,
+    messagesIndexed: 0,
+    errors: [],
+  };
+}
+
+function indexSessionFile(dbManager: DatabaseManager, file: string, result: BulkIndexResult): void {
+  result.sessionsProcessed++;
+
+  const session = parseSessionFile(file);
+  if (!session) {
+    result.errors.push(`Failed to parse: ${file}`);
+    return;
+  }
+
+  const indexResult = indexSession(dbManager, session);
+  upsertSessionFileMetadata(dbManager, file, session.id);
+  if (indexResult.skipped) {
+    result.sessionsSkipped++;
+  } else {
+    result.sessionsIndexed++;
+    result.messagesIndexed += indexResult.messagesIndexed;
+  }
 }
 
 /**
@@ -221,31 +299,49 @@ export function indexAllSessions(
   projectDir?: string
 ): BulkIndexResult {
   const files = getSessionFiles(sessionsDir, projectDir);
-  const result: BulkIndexResult = {
-    sessionsProcessed: 0,
-    sessionsIndexed: 0,
-    sessionsSkipped: 0,
-    messagesIndexed: 0,
-    errors: [],
-  };
+  const result = emptyBulkIndexResult();
 
   for (const file of files) {
-    result.sessionsProcessed++;
-
     try {
-      const session = parseSessionFile(file);
-      if (!session) {
-        result.errors.push(`Failed to parse: ${file}`);
+      indexSessionFile(dbManager, file, result);
+    } catch (err) {
+      result.errors.push(`Error indexing ${file}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Incrementally index session JSONL files without matching stored metadata.
+ *
+ * This is intentionally cheaper than indexAllSessions() for startup backfill:
+ * files with matching stored size/mtime metadata are skipped, and all other
+ * files are parsed under the startup cap.
+ */
+export function indexChangedSessions(
+  dbManager: DatabaseManager,
+  sessionsDir: string,
+  options: IncrementalIndexOptions = {},
+): BulkIndexResult {
+  const files = getSessionFiles(sessionsDir, options.projectDir);
+  const maxFilesToIndex = options.maxFilesToIndex ?? 50;
+  const result = emptyBulkIndexResult();
+
+  for (const file of files) {
+    try {
+      const metadata = getSessionFileMetadata(file);
+      if (storedSessionFileMatches(dbManager, metadata)) {
+        result.sessionsSkipped++;
         continue;
       }
 
-      const indexResult = indexSession(dbManager, session);
-      if (indexResult.skipped) {
-        result.sessionsSkipped++;
-      } else {
-        result.sessionsIndexed++;
-        result.messagesIndexed += indexResult.messagesIndexed;
+      if (result.sessionsProcessed >= maxFilesToIndex) {
+        result.reachedLimit = true;
+        break;
       }
+
+      indexSessionFile(dbManager, file, result);
     } catch (err) {
       result.errors.push(`Error indexing ${file}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -277,18 +373,26 @@ function isRecentBackfillTimestamp(value: string | null, nowMs: number): boolean
 /**
  * Determine whether a background session backfill should run.
  *
- * A backfill is needed when the number of JSONL session files differs from
- * the indexed session count, or when no successful backfill has completed in
- * the last 24 hours. The count check catches crashed/abnormal sessions; the
- * timestamp check periodically repairs parse errors or manual DB edits.
+ * The check stays cheap: it compares file counts and stored file size/mtime
+ * metadata. Full JSONL parsing is left to the scheduled incremental backfill.
  */
 export function needsBackfill(dbManager: DatabaseManager, sessionsDir: string, now = new Date()): boolean {
   const db = dbManager.getDb();
-  const fileCount = countSessionFiles(sessionsDir);
+  const files = getSessionFiles(sessionsDir);
   const indexed = db.prepare('SELECT COUNT(*) as count FROM sessions').get() as { count: number };
 
-  if (fileCount !== indexed.count) {
+  if (files.length > indexed.count) {
     return true;
+  }
+
+  for (const file of files) {
+    try {
+      const metadata = getSessionFileMetadata(file);
+      if (storedSessionFileMatches(dbManager, metadata)) continue;
+      return true;
+    } catch {
+      return true;
+    }
   }
 
   return !isRecentBackfillTimestamp(getLastBackfillTimestamp(dbManager), now.getTime());

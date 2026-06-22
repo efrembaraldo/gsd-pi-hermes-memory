@@ -7,6 +7,7 @@ import { DatabaseManager } from '../../src/store/db.js';
 import {
   indexSession,
   indexAllSessions,
+  indexChangedSessions,
   getSessionStats,
   countSessionFiles,
   needsBackfill,
@@ -202,6 +203,82 @@ describe('session-indexer', () => {
     });
   });
 
+  describe('indexChangedSessions', () => {
+    function writeJsonlSession(filePath: string, sessionId: string, messageIds = [`${sessionId}-m1`]): void {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const lines = [
+        JSON.stringify({ type: 'session', id: sessionId, timestamp: '2026-05-03T00:00:00Z', cwd: `/test/${sessionId}` }),
+        ...messageIds.map((id, index) => JSON.stringify({
+          type: 'message',
+          id,
+          parentId: null,
+          timestamp: `2026-05-03T00:0${index + 1}:00Z`,
+          message: { role: 'user', content: [{ type: 'text', text: `Hello ${id}` }], timestamp: Date.now() },
+        })),
+      ];
+      fs.writeFileSync(filePath, lines.join('\n'));
+    }
+
+    it('skips unchanged files using stored size and mtime metadata without parsing them', () => {
+      const sessionsDir = path.join(tmpDir, 'sessions');
+      const filePath = path.join(sessionsDir, 'project-a', 's1.jsonl');
+      writeJsonlSession(filePath, 's1');
+      indexAllSessions(dbManager, sessionsDir);
+
+      const result = indexChangedSessions(dbManager, sessionsDir);
+
+      assert.strictEqual(result.sessionsProcessed, 0);
+      assert.strictEqual(result.sessionsSkipped, 1);
+      assert.strictEqual(result.errors.length, 0);
+    });
+
+    it('indexes changed files and appends newly persisted messages', () => {
+      const sessionsDir = path.join(tmpDir, 'sessions');
+      const filePath = path.join(sessionsDir, 'project-a', 's1.jsonl');
+      writeJsonlSession(filePath, 's1', ['s1-m1']);
+      indexAllSessions(dbManager, sessionsDir);
+
+      writeJsonlSession(filePath, 's1', ['s1-m1', 's1-m2']);
+      const result = indexChangedSessions(dbManager, sessionsDir);
+
+      assert.strictEqual(result.sessionsProcessed, 1);
+      assert.strictEqual(result.sessionsIndexed, 1);
+      assert.strictEqual(result.messagesIndexed, 1);
+      assert.strictEqual(dbManager.getStats().messages, 2);
+    });
+
+    it('parses existing sessions without file metadata and appends missed messages', () => {
+      const sessionsDir = path.join(tmpDir, 'sessions');
+      const filePath = path.join(sessionsDir, 'project-a', 's1.jsonl');
+      indexSession(dbManager, createTestSession({
+        id: 's1',
+        messages: [
+          { id: 's1-m1', role: 'user', content: 'Hello s1-m1', timestamp: '2026-05-03T00:01:00Z' },
+        ],
+      }));
+      writeJsonlSession(filePath, 's1', ['s1-m1', 's1-m2']);
+
+      const result = indexChangedSessions(dbManager, sessionsDir);
+
+      assert.strictEqual(result.sessionsProcessed, 1);
+      assert.strictEqual(result.sessionsIndexed, 1);
+      assert.strictEqual(result.messagesIndexed, 1);
+      assert.strictEqual(dbManager.getStats().messages, 2);
+    });
+
+    it('caps parsed files during startup incremental backfill', () => {
+      const sessionsDir = path.join(tmpDir, 'sessions');
+      writeJsonlSession(path.join(sessionsDir, 'project-a', 's1.jsonl'), 's1');
+      writeJsonlSession(path.join(sessionsDir, 'project-a', 's2.jsonl'), 's2');
+
+      const result = indexChangedSessions(dbManager, sessionsDir, { maxFilesToIndex: 1 });
+
+      assert.strictEqual(result.sessionsProcessed, 1);
+      assert.strictEqual(result.reachedLimit, true);
+      assert.strictEqual(dbManager.getStats().sessions, 1);
+    });
+  });
+
   describe('current session indexing helpers', () => {
     function writeSessionFile(filePath: string): void {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -350,6 +427,32 @@ describe('session-indexer', () => {
       touchBackfillTimestamp(dbManager, new Date('2026-05-03T00:30:00Z'));
 
       assert.strictEqual(needsBackfill(dbManager, sessionsDir, new Date('2026-05-03T01:00:00Z')), false);
+    });
+
+    it('needsBackfill is true when file metadata changes even with a recent timestamp', () => {
+      const sessionsDir = path.join(tmpDir, 'sessions');
+      writeJsonlSession(sessionsDir, 'project-a', 's1');
+      indexAllSessions(dbManager, sessionsDir);
+      touchBackfillTimestamp(dbManager, new Date('2026-05-03T00:30:00Z'));
+
+      fs.appendFileSync(path.join(sessionsDir, 'project-a', 's1.jsonl'), '\n' + JSON.stringify({
+        type: 'message',
+        id: 's1-m2',
+        parentId: null,
+        timestamp: '2026-05-03T00:02:00Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'Hello again' }], timestamp: Date.now() },
+      }));
+
+      assert.strictEqual(needsBackfill(dbManager, sessionsDir, new Date('2026-05-03T01:00:00Z')), true);
+    });
+
+    it('needsBackfill is true for existing sessions without file metadata even with a recent timestamp', () => {
+      const sessionsDir = path.join(tmpDir, 'sessions');
+      writeJsonlSession(sessionsDir, 'project-a', 's1');
+      indexSession(dbManager, createTestSession({ id: 's1', messages: [] }));
+      touchBackfillTimestamp(dbManager, new Date('2026-05-03T00:30:00Z'));
+
+      assert.strictEqual(needsBackfill(dbManager, sessionsDir, new Date('2026-05-03T01:00:00Z')), true);
     });
 
     it('needsBackfill is true when timestamp is missing or older than 24 hours', () => {
