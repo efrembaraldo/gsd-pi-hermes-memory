@@ -52,7 +52,9 @@ export function scheduleLiveSessionIndex(
   state.promise = new Promise<void>((resolve) => {
     setTimeoutFn(() => {
       try {
-        indexLiveSessionFn(dbManager, sessionManager);
+        dbManager.withCorruptionRecovery(() => {
+          indexLiveSessionFn(dbManager, sessionManager);
+        });
       } catch (err) {
         try { options.onError?.(err); } catch { /* best effort */ }
       } finally {

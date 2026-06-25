@@ -246,12 +246,14 @@ export default function (pi: ExtensionAPI) {
       if (sessionFile && require("node:fs").existsSync(sessionFile)) {
         const sessionData = parseSessionFile(sessionFile);
         if (sessionData) {
-          indexSession(dbManager, sessionData);
-          // Keep session_files metadata in sync with the final on-disk state.
-          // Pi appends the closing session entry on shutdown after the last
-          // message_end, so without this upsert the stored size/mtime would be
-          // stale and the next startup would re-parse this file unnecessarily.
-          upsertSessionFileMetadata(dbManager, sessionFile, sessionData.id);
+          dbManager.withCorruptionRecovery(() => {
+            indexSession(dbManager, sessionData);
+            // Keep session_files metadata in sync with the final on-disk state.
+            // Pi appends the closing session entry on shutdown after the last
+            // message_end, so without this upsert the stored size/mtime would be
+            // stale and the next startup would re-parse this file unnecessarily.
+            upsertSessionFileMetadata(dbManager, sessionFile, sessionData.id);
+          });
         }
       }
     } catch {

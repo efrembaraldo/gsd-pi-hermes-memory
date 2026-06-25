@@ -164,6 +164,39 @@ describe('session live indexing handler', () => {
     assert.match(errors[0] instanceof Error ? errors[0].message : String(errors[0]), /boom/);
   });
 
+  it('repairs corruption and retries live indexing once before reporting an error', async () => {
+    dbManager.getDb();
+    const state: SessionLiveIndexState = { inProgress: false, promise: null };
+    const errors: unknown[] = [];
+    let attempts = 0;
+
+    const scheduled = scheduleLiveSessionIndex(dbManager, createSnapshot([]), {
+      state,
+      indexLiveSessionFn: () => {
+        attempts++;
+        if (attempts === 1) {
+          const err = new Error('SQLITE_CORRUPT: database disk image is malformed') as Error & { code: string };
+          err.code = 'SQLITE_CORRUPT';
+          throw err;
+        }
+        return null;
+      },
+      onError: (err) => errors.push(err),
+      delayMs: 0,
+      setTimeoutFn: (callback) => {
+        queueMicrotask(callback);
+        return 0;
+      },
+    });
+
+    assert.equal(scheduled, true);
+    await state.promise;
+
+    assert.equal(attempts, 2);
+    assert.equal(errors.length, 0);
+    assert.equal(dbManager.getLastRecovery()?.strategy, 'rebuilt');
+  });
+
   it('shutdown wait resolves true when live indexing completes before timeout', async () => {
     let resolveIndex!: () => void;
     const state: SessionLiveIndexState = {

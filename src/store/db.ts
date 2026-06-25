@@ -7,6 +7,7 @@ type StatementLike = {
   run: (...args: any[]) => any;
   get: (...args: any[]) => any;
   all: (...args: any[]) => any;
+  iterate?: (...args: any[]) => Iterable<Record<string, unknown>>;
 };
 
 type DatabaseLike = {
@@ -24,6 +25,39 @@ type BunDatabaseInstance = {
   close: (throwOnError?: boolean) => void;
   transaction?: (fn: any) => any;
 };
+
+type DatabaseFileSuffix = '' | '-wal' | '-shm';
+
+type MovedDatabaseFile = {
+  original: string;
+  backup: string;
+};
+
+export interface DatabaseRecoveryResult {
+  strategy: 'rebuilt' | 'recreated-empty';
+  backupPaths: string[];
+  recoveredRows?: Record<string, number>;
+  error?: string;
+}
+
+class DatabaseCorruptionError extends Error {
+  code = 'SQLITE_CORRUPT';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'DatabaseCorruptionError';
+  }
+}
+
+export const SQLITE_WAL_AUTOCHECKPOINT_PAGES = 1000;
+
+const DATABASE_FILE_SUFFIXES: readonly DatabaseFileSuffix[] = ['', '-wal', '-shm'];
+const MEMORY_TARGETS = new Set(['memory', 'user', 'failure']);
+const MEMORY_CATEGORIES = new Set(['failure', 'correction', 'insight', 'preference', 'convention', 'tool-quirk']);
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
 
 function createBunCompatDatabaseCtor(require: NodeRequire): DatabaseCtor {
   const bunSqlite = require('bun:sqlite') as { Database: new (dbPath: string) => BunDatabaseInstance };
@@ -77,9 +111,35 @@ const Database = loadDatabaseCtor();
 export class DatabaseManager {
   private db: DatabaseLike | null = null;
   private readonly dbPath: string;
+  private lastRecovery: DatabaseRecoveryResult | null = null;
 
   constructor(memoryDir: string) {
     this.dbPath = path.join(memoryDir, 'sessions.db');
+  }
+
+  /**
+   * True when an error indicates SQLite file/page corruption rather than a
+   * normal constraint, migration, or query failure.
+   */
+  static isCorruptionError(err: unknown): boolean {
+    if (!err) return false;
+
+    const code = typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code) : '';
+    if (code === 'SQLITE_CORRUPT' || code === 'SQLITE_NOTADB') return true;
+
+    const message = DatabaseManager.errorMessage(err).toLowerCase();
+    return message.includes('database disk image is malformed')
+      || message.includes('file is not a database')
+      || message.includes('database schema is corrupt')
+      || message.includes('malformed database schema')
+      || message.includes('btreeinitpage')
+      || message.includes('sqlite_corrupt')
+      || message.includes('sqlite_notadb');
+  }
+
+  private static errorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    return String(err);
   }
 
   /**
@@ -93,23 +153,94 @@ export class DatabaseManager {
   }
 
   /**
+   * Last self-heal performed by this manager, if any. Exposed for diagnostics
+   * and tests; normal callers do not need it.
+   */
+  getLastRecovery(): DatabaseRecoveryResult | null {
+    return this.lastRecovery;
+  }
+
+  /**
+   * Retry a DB operation once after quarantining/rebuilding a corrupt DB.
+   */
+  withCorruptionRecovery<T>(operation: () => T): T {
+    try {
+      return operation();
+    } catch (err) {
+      if (!DatabaseManager.isCorruptionError(err)) {
+        throw err;
+      }
+      this.recoverFromCorruption(err);
+      return operation();
+    }
+  }
+
+  /**
+   * Close any open handle, rebuild/quarantine the DB file set, and let the next
+   * getDb() reopen a clean database.
+   */
+  recoverFromCorruption(cause?: unknown): DatabaseRecoveryResult {
+    this.close();
+    const recovery = this.recoverDatabaseFile(cause);
+    this.lastRecovery = recovery;
+    return recovery;
+  }
+
+  /**
    * Open the database and initialize schema.
    */
   private open(): DatabaseLike {
-    // Ensure directory exists
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    const db = new Database(this.dbPath);
+    try {
+      return this.openUnchecked();
+    } catch (err) {
+      if (!DatabaseManager.isCorruptionError(err)) {
+        throw err;
+      }
 
-    // Enable WAL mode + FK enforcement for each connection.
+      const recovery = this.recoverDatabaseFile(err);
+      this.lastRecovery = recovery;
+      return this.openUnchecked();
+    }
+  }
+
+  private openUnchecked(): DatabaseLike {
+    const existed = this.hasExistingMainDatabaseFile();
+    const db = new Database(this.dbPath);
+    let ok = false;
+
+    try {
+      if (existed) {
+        this.assertIntegrityOk(db, 'quick_check', 'before schema initialization');
+      }
+
+      this.configureConnection(db);
+      this.initializeSchema(db);
+      this.assertIntegrityOk(db, 'quick_check', 'after schema initialization');
+      ok = true;
+      return db;
+    } finally {
+      if (!ok) {
+        this.safeClose(db);
+      }
+    }
+  }
+
+  private configureConnection(db: DatabaseLike): void {
+    // Enable WAL mode + FK enforcement for each connection. Keep SQLite's
+    // default WAL autocheckpoint size; a very aggressive checkpoint cadence
+    // increases the chance that abrupt VM/host shutdown catches a checkpoint.
     db.exec('PRAGMA journal_mode = WAL');
-    db.exec('PRAGMA wal_autocheckpoint = 100');
+    db.exec(`PRAGMA wal_autocheckpoint = ${SQLITE_WAL_AUTOCHECKPOINT_PAGES}`);
     db.exec('PRAGMA journal_size_limit = 5242880');
     db.exec('PRAGMA foreign_keys = ON');
+  }
 
+  private initializeSchema(db: DatabaseLike): void {
     // Create tables and triggers
     try {
       db.exec(SCHEMA_SQL);
@@ -129,8 +260,334 @@ export class DatabaseManager {
     this.ensureMemoriesColumns(db);
     this.migrateLegacyMemoriesTargetConstraint(db);
     this.rebuildMemoryFts(db);
+  }
 
-    return db;
+  private hasExistingMainDatabaseFile(): boolean {
+    try {
+      return fs.existsSync(this.dbPath) && fs.statSync(this.dbPath).size > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private databaseFileSetExists(): boolean {
+    return DATABASE_FILE_SUFFIXES.some((suffix) => fs.existsSync(`${this.dbPath}${suffix}`));
+  }
+
+  private assertIntegrityOk(
+    db: DatabaseLike,
+    check: 'quick_check' | 'integrity_check' = 'quick_check',
+    context = '',
+  ): void {
+    const rows = db.prepare(`PRAGMA ${check}`).all() as Record<string, unknown>[];
+    const messages = rows.map((row) => String(Object.values(row)[0] ?? ''));
+    const failures = messages.filter((message) => message.toLowerCase() !== 'ok');
+
+    if (rows.length === 0 || failures.length > 0) {
+      const detail = failures.length > 0 ? failures.slice(0, 5).join('\n') : 'no result rows';
+      const suffix = context ? ` ${context}` : '';
+      throw new DatabaseCorruptionError(`SQLite ${check} failed${suffix}: ${detail}`);
+    }
+  }
+
+  private assertForeignKeysOk(db: DatabaseLike): void {
+    const rows = db.prepare('PRAGMA foreign_key_check').all() as Record<string, unknown>[];
+    if (rows.length > 0) {
+      throw new Error(`SQLite foreign_key_check failed after rebuild (${rows.length} violation${rows.length === 1 ? '' : 's'})`);
+    }
+  }
+
+  private recoverDatabaseFile(cause?: unknown): DatabaseRecoveryResult {
+    const backupBase = this.corruptBackupBase();
+    let rebuildError: unknown;
+
+    if (this.databaseFileSetExists()) {
+      try {
+        return this.rebuildDatabaseFromReadableRows(backupBase);
+      } catch (err) {
+        rebuildError = err;
+      }
+    }
+
+    const moved = this.moveDatabaseFilesToBackup(backupBase);
+    return {
+      strategy: 'recreated-empty',
+      backupPaths: moved.map((file) => file.backup),
+      error: DatabaseManager.errorMessage(rebuildError ?? cause ?? 'unknown corruption'),
+    };
+  }
+
+  private rebuildDatabaseFromReadableRows(backupBase: string): DatabaseRecoveryResult {
+    const tempPath = this.rebuildTempPath();
+    this.removeDatabaseFileSet(tempPath);
+
+    let source: DatabaseLike | null = null;
+    let target: DatabaseLike | null = null;
+    let recoveredRows: Record<string, number> | undefined;
+    let rebuildOk = false;
+
+    try {
+      source = new Database(this.dbPath);
+      target = new Database(tempPath);
+      target.exec('PRAGMA journal_mode = DELETE');
+      target.exec('PRAGMA foreign_keys = OFF');
+      target.exec(SCHEMA_SQL);
+
+      recoveredRows = this.copyRecoverableRows(source, target);
+      this.rebuildFtsTables(target);
+      this.assertForeignKeysOk(target);
+      this.assertIntegrityOk(target, 'quick_check', 'after corruption rebuild');
+      rebuildOk = true;
+    } finally {
+      if (source) this.safeClose(source);
+      if (target) this.safeClose(target);
+      if (!rebuildOk) this.removeDatabaseFileSet(tempPath);
+    }
+
+    const moved = this.swapRebuiltDatabase(tempPath, backupBase);
+    this.removeDatabaseFileSet(tempPath);
+
+    return {
+      strategy: 'rebuilt',
+      backupPaths: moved.map((file) => file.backup),
+      recoveredRows,
+    };
+  }
+
+  private copyRecoverableRows(source: DatabaseLike, target: DatabaseLike): Record<string, number> {
+    return {
+      extension_metadata: this.copyExtensionMetadata(source, target),
+      sessions: this.copySessions(source, target),
+      messages: this.copyMessages(source, target),
+      session_files: this.copySessionFiles(source, target),
+      memories: this.copyMemories(source, target),
+    };
+  }
+
+  private copyExtensionMetadata(source: DatabaseLike, target: DatabaseLike): number {
+    const insert = target.prepare('INSERT OR REPLACE INTO extension_metadata (key, value) VALUES (?, ?)');
+    let copied = 0;
+
+    for (const row of this.readTableRows(source, 'extension_metadata', ['key', 'value'])) {
+      if (typeof row.key !== 'string' || typeof row.value !== 'string') continue;
+      insert.run(row.key, row.value);
+      copied++;
+    }
+
+    return copied;
+  }
+
+  private copySessions(source: DatabaseLike, target: DatabaseLike): number {
+    const insert = target.prepare(`
+      INSERT OR IGNORE INTO sessions (id, project, cwd, started_at, ended_at, message_count)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    let copied = 0;
+
+    for (const row of this.readTableRows(source, 'sessions', ['id', 'project', 'cwd', 'started_at', 'ended_at', 'message_count'])) {
+      if (typeof row.id !== 'string' || typeof row.cwd !== 'string' || typeof row.started_at !== 'string') continue;
+      const project = typeof row.project === 'string' && row.project ? row.project : (path.basename(row.cwd) || 'unknown');
+      insert.run(
+        row.id,
+        project,
+        row.cwd,
+        row.started_at,
+        this.nullableString(row.ended_at),
+        this.integerOr(row.message_count, 0),
+      );
+      copied++;
+    }
+
+    return copied;
+  }
+
+  private copyMessages(source: DatabaseLike, target: DatabaseLike): number {
+    const insert = target.prepare(`
+      INSERT OR IGNORE INTO messages (id, session_id, role, content, timestamp, tool_calls)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    let copied = 0;
+
+    for (const row of this.readTableRows(source, 'messages', ['id', 'session_id', 'role', 'content', 'timestamp', 'tool_calls'])) {
+      if (
+        typeof row.id !== 'string'
+        || typeof row.session_id !== 'string'
+        || (row.role !== 'user' && row.role !== 'assistant' && row.role !== 'system')
+        || typeof row.content !== 'string'
+        || typeof row.timestamp !== 'string'
+      ) {
+        continue;
+      }
+
+      insert.run(row.id, row.session_id, row.role, row.content, row.timestamp, this.nullableString(row.tool_calls));
+      copied++;
+    }
+
+    return copied;
+  }
+
+  private copySessionFiles(source: DatabaseLike, target: DatabaseLike): number {
+    const insert = target.prepare(`
+      INSERT OR IGNORE INTO session_files (path, session_id, size, mtime_ms, indexed_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    let copied = 0;
+
+    for (const row of this.readTableRows(source, 'session_files', ['path', 'session_id', 'size', 'mtime_ms', 'indexed_at'])) {
+      if (typeof row.path !== 'string' || typeof row.session_id !== 'string') continue;
+      insert.run(
+        row.path,
+        row.session_id,
+        this.integerOr(row.size, 0),
+        this.integerOr(row.mtime_ms, 0),
+        typeof row.indexed_at === 'string' ? row.indexed_at : new Date(0).toISOString(),
+      );
+      copied++;
+    }
+
+    return copied;
+  }
+
+  private copyMemories(source: DatabaseLike, target: DatabaseLike): number {
+    const insert = target.prepare(`
+      INSERT OR IGNORE INTO memories (id, project, target, category, content, failure_reason, tool_state, corrected_to, created, last_referenced)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    let copied = 0;
+
+    for (const row of this.readTableRows(source, 'memories', [
+      'id',
+      'project',
+      'target',
+      'category',
+      'content',
+      'failure_reason',
+      'tool_state',
+      'corrected_to',
+      'created',
+      'last_referenced',
+    ])) {
+      const id = this.integerOr(row.id, NaN);
+      if (!Number.isFinite(id) || typeof row.content !== 'string') continue;
+
+      const targetName = typeof row.target === 'string' && MEMORY_TARGETS.has(row.target) ? row.target : 'memory';
+      const category = typeof row.category === 'string' && MEMORY_CATEGORIES.has(row.category) ? row.category : null;
+      const created = typeof row.created === 'string' ? row.created : new Date(0).toISOString();
+      const lastReferenced = typeof row.last_referenced === 'string' ? row.last_referenced : created;
+
+      insert.run(
+        id,
+        this.nullableString(row.project),
+        targetName,
+        category,
+        row.content,
+        this.nullableString(row.failure_reason),
+        this.nullableString(row.tool_state),
+        this.nullableString(row.corrected_to),
+        created,
+        lastReferenced,
+      );
+      copied++;
+    }
+
+    return copied;
+  }
+
+  private readTableRows(source: DatabaseLike, table: string, desiredColumns: string[]): Iterable<Record<string, unknown>> {
+    const columns = this.getColumnNames(source, table);
+    const selected = desiredColumns.filter((column) => columns.has(column));
+    if (selected.length === 0) return [];
+
+    const sql = `SELECT ${selected.map(quoteIdentifier).join(', ')} FROM ${quoteIdentifier(table)} NOT INDEXED`;
+    const statement = source.prepare(sql);
+    if (statement.iterate) {
+      return statement.iterate() as Iterable<Record<string, unknown>>;
+    }
+    return statement.all() as Record<string, unknown>[];
+  }
+
+  private getColumnNames(db: DatabaseLike, table: string): Set<string> {
+    const rows = db.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as { name?: unknown }[];
+    return new Set(rows.map((row) => row.name).filter((name): name is string => typeof name === 'string'));
+  }
+
+  private nullableString(value: unknown): string | null {
+    return typeof value === 'string' ? value : null;
+  }
+
+  private integerOr(value: unknown, fallback: number): number {
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+    if (typeof value === 'bigint') return Number(value);
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return fallback;
+  }
+
+  private rebuildFtsTables(db: DatabaseLike): void {
+    db.exec("INSERT INTO message_fts(message_fts) VALUES('rebuild')");
+    db.exec("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')");
+  }
+
+  private corruptBackupBase(): string {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const nonce = Math.random().toString(16).slice(2, 8);
+    return `${this.dbPath}.corrupt-${stamp}-${process.pid}-${nonce}`;
+  }
+
+  private rebuildTempPath(): string {
+    const stamp = Date.now();
+    const nonce = Math.random().toString(16).slice(2, 8);
+    return `${this.dbPath}.rebuild-${process.pid}-${stamp}-${nonce}.tmp`;
+  }
+
+  private swapRebuiltDatabase(tempPath: string, backupBase: string): MovedDatabaseFile[] {
+    const moved = this.moveDatabaseFilesToBackup(backupBase);
+    try {
+      fs.renameSync(tempPath, this.dbPath);
+      return moved;
+    } catch (err) {
+      this.restoreMovedDatabaseFiles(moved);
+      this.removeDatabaseFileSet(tempPath);
+      throw err;
+    }
+  }
+
+  private moveDatabaseFilesToBackup(backupBase: string): MovedDatabaseFile[] {
+    const moved: MovedDatabaseFile[] = [];
+    for (const suffix of DATABASE_FILE_SUFFIXES) {
+      const original = `${this.dbPath}${suffix}`;
+      if (!fs.existsSync(original)) continue;
+
+      const backup = `${backupBase}${suffix}`;
+      fs.rmSync(backup, { force: true });
+      fs.renameSync(original, backup);
+      moved.push({ original, backup });
+    }
+    return moved;
+  }
+
+  private restoreMovedDatabaseFiles(moved: MovedDatabaseFile[]): void {
+    for (const file of [...moved].reverse()) {
+      try {
+        if (!fs.existsSync(file.backup)) continue;
+        fs.rmSync(file.original, { force: true });
+        fs.renameSync(file.backup, file.original);
+      } catch {
+        // Best effort. The backup path remains available if restoration fails.
+      }
+    }
+  }
+
+  private removeDatabaseFileSet(basePath: string): void {
+    for (const suffix of DATABASE_FILE_SUFFIXES) {
+      fs.rmSync(`${basePath}${suffix}`, { force: true });
+    }
+  }
+
+  private safeClose(db: DatabaseLike): void {
+    try { db.close(); } catch { /* best effort */ }
   }
 
   private isLegacyMemoriesCategoryError(err: unknown): boolean {
@@ -254,7 +711,7 @@ export class DatabaseManager {
   close(): void {
     if (this.db) {
       try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* best effort */ }
-      this.db.close();
+      try { this.db.close(); } catch { /* best effort — close may throw on a corrupt handle */ }
       this.db = null;
     }
   }

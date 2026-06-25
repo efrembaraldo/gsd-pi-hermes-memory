@@ -43,6 +43,10 @@ export interface IncrementalIndexOptions {
  * @returns IndexResult with count of messages indexed
  */
 export function indexSession(dbManager: DatabaseManager, session: ParsedSession): IndexResult {
+  return dbManager.withCorruptionRecovery(() => indexSessionOnce(dbManager, session));
+}
+
+function indexSessionOnce(dbManager: DatabaseManager, session: ParsedSession): IndexResult {
   const db = dbManager.getDb();
 
   const existingSession = db.prepare('SELECT id FROM sessions WHERE id = ?').get(session.id) as { id: string } | undefined;
@@ -210,6 +214,10 @@ export function indexCurrentSession(dbManager: DatabaseManager, sessionManager: 
 }
 
 export function indexLiveSession(dbManager: DatabaseManager, sessionManager: SessionManagerSnapshot): IndexResult | null {
+  return dbManager.withCorruptionRecovery(() => indexLiveSessionOnce(dbManager, sessionManager));
+}
+
+function indexLiveSessionOnce(dbManager: DatabaseManager, sessionManager: SessionManagerSnapshot): IndexResult | null {
   const sessionFile = sessionManager.getSessionFile?.();
   if (sessionFile && fs.existsSync(sessionFile)) {
     const session = parseSessionFile(sessionFile);

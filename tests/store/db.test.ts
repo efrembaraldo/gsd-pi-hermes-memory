@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import Database from 'better-sqlite3';
-import { DatabaseManager } from '../../src/store/db.js';
+import { DatabaseManager, SQLITE_WAL_AUTOCHECKPOINT_PAGES } from '../../src/store/db.js';
 
 describe('DatabaseManager', () => {
   let tmpDir: string;
@@ -19,6 +19,54 @@ describe('DatabaseManager', () => {
     dbManager.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  function assertQuickCheckOk(db: InstanceType<typeof Database>): void {
+    const rows = db.prepare('PRAGMA quick_check').all() as Array<Record<string, unknown>>;
+    assert.deepStrictEqual(rows.map((row) => Object.values(row)[0]), ['ok']);
+  }
+
+  function corruptSqliteError(): Error & { code: string } {
+    const err = new Error('SQLITE_CORRUPT: database disk image is malformed') as Error & { code: string };
+    err.code = 'SQLITE_CORRUPT';
+    return err;
+  }
+
+  function corruptRecoverableIndexPage(dbPath: string, indexName: string): void {
+    const db = new Database(dbPath);
+    const pageSize = db.pragma('page_size', { simple: true }) as number;
+    const row = db.prepare(`
+      SELECT pageno
+      FROM dbstat
+      WHERE name = ? AND pagetype IN ('internal', 'leaf')
+      ORDER BY pageno ASC
+      LIMIT 1
+    `).get(indexName) as { pageno: number } | undefined;
+    db.close();
+
+    assert.ok(row, `dbstat did not find index page for ${indexName}`);
+    assert.ok(row.pageno > 1, 'will not corrupt sqlite database header page');
+
+    const buffer = fs.readFileSync(dbPath);
+    const offset = (row.pageno - 1) * pageSize;
+    for (let i = 0; i < 16 && offset + i < buffer.length; i++) {
+      buffer[offset + i] ^= 0xff;
+    }
+    fs.writeFileSync(dbPath, buffer);
+
+    const checkDb = new Database(dbPath);
+    try {
+      const rows = checkDb.prepare('PRAGMA quick_check').all() as Array<Record<string, unknown>>;
+      const ok = rows.length === 1 && Object.values(rows[0])[0] === 'ok';
+      assert.equal(ok, false, 'test fixture must produce a quick_check failure');
+      assert.doesNotThrow(() => {
+        checkDb.prepare('SELECT COUNT(*) as count FROM sessions NOT INDEXED').get();
+        checkDb.prepare('SELECT COUNT(*) as count FROM messages NOT INDEXED').get();
+        checkDb.prepare('SELECT COUNT(*) as count FROM memories NOT INDEXED').get();
+      }, 'test fixture must leave core table scans readable');
+    } finally {
+      checkDb.close();
+    }
+  }
 
   describe('initialization', () => {
     it('should create database file on first getDb() call', () => {
@@ -171,6 +219,78 @@ describe('DatabaseManager', () => {
     });
   });
 
+  describe('corruption recovery', () => {
+    it('repairs recoverable corruption on open and preserves readable rows', () => {
+      const db = dbManager.getDb();
+      db.prepare(`
+        INSERT INTO sessions (id, project, cwd, started_at)
+        VALUES (?, ?, ?, ?)
+      `).run('recover-session', 'recover-project', '/work/recover', '2026-05-03T00:00:00Z');
+
+      const insertMessage = db.prepare(`
+        INSERT INTO messages (id, session_id, role, content, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (let i = 0; i < 50; i++) {
+        insertMessage.run(`recover-msg-${i}`, 'recover-session', i % 2 === 0 ? 'user' : 'assistant', `message ${i}`, `2026-05-03T00:${String(i).padStart(2, '0')}:00Z`);
+      }
+
+      db.prepare(`
+        INSERT INTO memories (project, target, content, created, last_referenced)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(null, 'memory', 'recoverable memory', '2026-05-03', '2026-05-03');
+      dbManager.close();
+
+      corruptRecoverableIndexPage(path.join(tmpDir, 'sessions.db'), 'idx_messages_timestamp');
+
+      dbManager = new DatabaseManager(tmpDir);
+      const repairedDb = dbManager.getDb();
+
+      assert.strictEqual(dbManager.getLastRecovery()?.strategy, 'rebuilt');
+      assert.deepStrictEqual(dbManager.getLastRecovery()?.recoveredRows, {
+        extension_metadata: 0,
+        sessions: 1,
+        messages: 50,
+        session_files: 0,
+        memories: 1,
+      });
+      assert.deepStrictEqual(dbManager.getStats(), { sessions: 1, messages: 50, memories: 1 });
+      const memory = repairedDb.prepare('SELECT content FROM memories WHERE content = ?').get('recoverable memory') as { content: string } | undefined;
+      assert.ok(memory);
+      assertQuickCheckOk(repairedDb as InstanceType<typeof Database>);
+      assert.ok(fs.readdirSync(tmpDir).some((name) => name.startsWith('sessions.db.corrupt-')), 'corrupt DB should be quarantined');
+    });
+
+    it('quarantines unrecoverable files and recreates an empty database', () => {
+      dbManager.close();
+      const dbPath = path.join(tmpDir, 'sessions.db');
+      fs.writeFileSync(dbPath, 'not a sqlite database');
+
+      dbManager = new DatabaseManager(tmpDir);
+      const db = dbManager.getDb();
+
+      assert.strictEqual(dbManager.getLastRecovery()?.strategy, 'recreated-empty');
+      assert.deepStrictEqual(dbManager.getStats(), { sessions: 0, messages: 0, memories: 0 });
+      assertQuickCheckOk(db as InstanceType<typeof Database>);
+      assert.ok(fs.readdirSync(tmpDir).some((name) => name.startsWith('sessions.db.corrupt-')), 'unrecoverable DB should be quarantined');
+    });
+
+    it('retries a corrupt operation once after self-healing', () => {
+      dbManager.getDb();
+      let attempts = 0;
+
+      const result = dbManager.withCorruptionRecovery(() => {
+        attempts++;
+        if (attempts === 1) throw corruptSqliteError();
+        return 'ok';
+      });
+
+      assert.strictEqual(result, 'ok');
+      assert.strictEqual(attempts, 2);
+      assert.strictEqual(dbManager.getLastRecovery()?.strategy, 'rebuilt');
+    });
+  });
+
   describe('close', () => {
     it('should close database connection', () => {
       const db = dbManager.getDb();
@@ -255,6 +375,12 @@ describe('DatabaseManager', () => {
       const db = dbManager.getDb();
       const result = db.pragma('journal_mode', { simple: true }) as string;
       assert.strictEqual(result, 'wal');
+    });
+
+    it('should use SQLite default-size WAL autocheckpoints', () => {
+      const db = dbManager.getDb();
+      const result = db.pragma('wal_autocheckpoint', { simple: true }) as number;
+      assert.strictEqual(result, SQLITE_WAL_AUTOCHECKPOINT_PAGES);
     });
   });
 

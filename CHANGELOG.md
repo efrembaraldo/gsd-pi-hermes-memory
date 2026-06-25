@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.20] - 2026-06-25
+
+### Fixed
+
+- **Self-healing corrupt SQLite database** ([#86](https://github.com/chandra447/pi-hermes-memory/issues/86)): `DatabaseManager.open()` now runs `PRAGMA quick_check` before and after schema initialization and performs a lossless row-level rebuild (read readable rows → fresh DB → `foreign_key_check` + `quick_check` → atomic swap → quarantine original) when corruption is detected, falling back to recreate-empty only if the rebuild fails. A new `withCorruptionRecovery()` wrapper catches `SQLITE_CORRUPT`/"malformed" errors on writes (including the `message_end` live indexer and `session_shutdown` upsert paths) and heals + retries once, so a torn DB self-heals instead of logging `⚠️ Live session indexing failed` on every turn indefinitely. Also restores `wal_autocheckpoint` to SQLite's default (1000, was 100) to narrow the torn-write window.
+- **Graceful close on corrupt handle**: `DatabaseManager.close()` now wraps `this.db.close()` in a try/catch so the recovery `close()` → reopen path doesn't propagate a throw from a corrupt database handle.
+
 ## [0.7.19] - 2026-06-23
 
 ### Fixed
