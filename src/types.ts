@@ -10,6 +10,8 @@ export type SessionSearchVariant = "legacy" | "anchors";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export type ReviewTransport = "direct" | "subprocess";
+
 export interface SessionSearchConfig {
   /** Session search implementation variant. Default: legacy */
   variant: SessionSearchVariant;
@@ -34,6 +36,8 @@ export interface MemoryConfig {
   reviewRecentMessages?: number;
   /** Enable background learning loop. Default: true */
   reviewEnabled: boolean;
+  /** How background review invokes the LLM. Default: direct */
+  reviewTransport?: ReviewTransport;
   /** Flush memories before compaction. Default: true */
   flushOnCompact: boolean;
   /** Flush memories on session shutdown. Default: true */

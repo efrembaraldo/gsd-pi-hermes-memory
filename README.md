@@ -339,6 +339,19 @@ Background review triggers based on **activity level**, not just turn count:
 
 Both counters reset after each review.
 
+### Background Review Transport
+
+By default, background review uses an in-process `completeSimple()` side-channel: a small JSON-only prompt, no child `pi` process, and memory writes applied directly by the extension. This keeps the main session's system prompt, tools, and LLM prefix cache intact.
+
+If direct review fails (no model, no auth, provider error, unparseable response), it automatically falls back to the legacy `pi -p --no-session` subprocess path.
+
+Set `reviewTransport` in config only when you need to override this:
+
+| Value | Behavior |
+|---|---|
+| `direct` (default) | Try in-process `completeSimple()` first; fall back to subprocess on failure |
+| `subprocess` | Always use `pi -p` subprocess (pre-PR #92 behavior) |
+
 ### Skill Auto-Extraction
 
 After a complex task (8+ tool calls using 2+ different tools in a single turn), the extension automatically asks the agent:
@@ -430,6 +443,7 @@ Create `~/.pi/agent/hermes-memory-config.json`:
   "nudgeToolCalls": 15,
   "reviewRecentMessages": 0,
   "reviewEnabled": true,
+  "reviewTransport": "direct",
   "memoryOverflowStrategy": "auto-consolidate",
   "autoConsolidate": true,
   "correctionDetection": true,
@@ -455,12 +469,13 @@ Create `~/.pi/agent/hermes-memory-config.json`:
 | `memoryDir` | `~/.pi/agent/pi-hermes-memory` | Custom directory for extension storage files |
 | `projectsMemoryDir` | `projects-memory` | Subdirectory under `~/.pi/agent/` for project-scoped memory |
 | `sessionSearch` | `{ "variant": "legacy" }` | Session search implementation: `legacy` keeps the existing SQLite/FTS snippet search; `anchors` uses the opt-in Markdown request surface and returns compact JSONL line-range anchors from `~/.pi/agent/sessions/` |
-| `llmModelOverride` | unset | Optional model override for child `pi -p` subprocess calls used by background review, correction save, session flush, and consolidation |
-| `llmThinkingOverride` | unset | Optional thinking override for those child subprocess calls; valid values are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`. If `llmModelOverride` is set and this is omitted, child calls default to `off` |
+| `llmModelOverride` | unset | Optional model override for background review (direct and subprocess), correction save, session flush, and consolidation |
+| `llmThinkingOverride` | unset | Optional thinking override for those LLM calls; valid values are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`. If `llmModelOverride` is set and this is omitted, review/child calls default to `off` |
 | `nudgeInterval` | `10` | Turns between auto-reviews |
 | `nudgeToolCalls` | `15` | Tool calls between auto-reviews (OR with turns) |
 | `reviewRecentMessages` | `0` | Recent messages included in background review (`0` = all) |
 | `reviewEnabled` | `true` | Enable/disable background learning loop |
+| `reviewTransport` | `direct` | Background review LLM transport: `direct` uses in-process `completeSimple()` with subprocess fallback; `subprocess` forces legacy `pi -p` only |
 | `memoryOverflowStrategy` | `auto-consolidate` | Behavior when MEMORY.md, USER.md, failures.md, or project-scoped memory reaches its character limit: `auto-consolidate` runs the existing consolidation flow; `reject` returns an error; `fifo-evict` rotates older entries in file order until the new entry fits |
 | `autoConsolidate` | `true` | Legacy alias for `memoryOverflowStrategy` when `memoryOverflowStrategy` is not set (`true` = `auto-consolidate`, `false` = `reject`) |
 | `consolidationTimeoutMs` | `60000` | Maximum time in milliseconds for auto-consolidation to complete |

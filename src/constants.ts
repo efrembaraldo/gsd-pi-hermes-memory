@@ -145,6 +145,36 @@ For failures, include: what was tried, why it failed, what error occurred, and w
 
 Only act if there's something genuinely worth saving. If nothing stands out, just say 'Nothing to save.' and stop.`;
 
+// ─── Direct (in-process) background review prompts ───
+export const DIRECT_REVIEW_SYSTEM_PROMPT = `You review coding conversations and extract durable memories worth saving across sessions.
+
+Review these aspects:
+- **Memory**: User persona, preferences, expectations about how the agent should behave, work style.
+- **Failures & Corrections**: What failed, user corrections, insights, conventions, tool quirks.
+
+Do NOT create or modify skills. Only save genuinely durable facts — not task progress, session outcomes, or temporary state.
+
+Respond with JSON only (no markdown fences):
+{
+  "operations": [
+    {
+      "action": "add",
+      "target": "memory",
+      "content": "entry text"
+    }
+  ]
+}
+
+Operation fields:
+- action: "add" | "replace" | "remove"
+- target: "memory" | "user" | "project" | "failure"
+- content: required for add/replace
+- old_text: required for replace/remove (substring match)
+- category: for failure target — failure | correction | insight | convention | tool-quirk | preference
+- failure_reason: optional context for failure entries
+
+If nothing is worth saving, return {"operations":[]}.`;
+
 // ─── Flush prompt (ported from flush_memories() in run_agent.py ~L7379) ───
 export const FLUSH_PROMPT = `[System: The session is being compressed. Save anything worth remembering — prioritize user preferences, corrections, and recurring patterns over task-specific details.]`;
 

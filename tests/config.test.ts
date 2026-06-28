@@ -23,6 +23,7 @@ describe("loadConfig", () => {
     assert.strictEqual(config.nudgeInterval, 10);
     assert.strictEqual(config.reviewRecentMessages, 0);
     assert.strictEqual(config.reviewEnabled, true);
+    assert.strictEqual(config.reviewTransport, "direct");
     assert.strictEqual(config.flushOnCompact, true);
     assert.strictEqual(config.flushOnShutdown, true);
     assert.strictEqual(config.flushMinTurns, 6);
@@ -265,6 +266,20 @@ describe("loadConfig", () => {
       const config = loadConfig(TEST_CONFIG_PATH);
       assert.deepStrictEqual(config.sessionSearch, { variant });
     }
+  });
+
+  it("accepts valid reviewTransport values and ignores invalid ones", () => {
+    fs.mkdirSync(path.dirname(TEST_CONFIG_PATH), { recursive: true });
+
+    for (const transport of ["direct", "subprocess"] as const) {
+      fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ reviewTransport: transport }));
+      const config = loadConfig(TEST_CONFIG_PATH);
+      assert.strictEqual(config.reviewTransport, transport);
+    }
+
+    fs.writeFileSync(TEST_CONFIG_PATH, JSON.stringify({ reviewTransport: "branch" }));
+    const invalid = loadConfig(TEST_CONFIG_PATH);
+    assert.strictEqual(invalid.reviewTransport, "direct");
   });
 
   it("accepts valid llmThinkingOverride values and ignores invalid ones", () => {

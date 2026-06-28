@@ -188,7 +188,10 @@ export default function (pi: ExtensionAPI) {
   registerSkillTool(pi, skillStore);
 
   // ── 5. Setup background learning loop (with tool-call-aware nudge) ──
-  setupBackgroundReview(pi, store, projectStore, config);
+  setupBackgroundReview(pi, store, projectStore, config, {
+    dbManager,
+    projectName: projectName || null,
+  });
 
   // ── 6. Setup session-end flush ──
   setupSessionFlush(pi, store, projectStore, config);

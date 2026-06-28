@@ -1,7 +1,12 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert";
-import { setupBackgroundReview } from "../../src/handlers/background-review.js";
+import {
+  buildDirectReviewUserPrompt,
+  buildSubprocessReviewPrompt,
+  setupBackgroundReview,
+} from "../../src/handlers/background-review.js";
 import { resolveChildPiInvocation } from "../../src/handlers/pi-child-process.js";
+import type { DirectReviewResult } from "../../src/handlers/review-memory-ops.js";
 
 // ─── Mock infrastructure ───
 
@@ -12,6 +17,7 @@ interface CallLog {
 
 let handlers: Record<string, Function[]>;
 let execCalls: any[];
+let directCalls: any[];
 let notifyCalls: any[];
 
 function createMockPi(execReturn?: { code: number; stdout: string; stderr: string }) {
@@ -58,6 +64,7 @@ function makeCtx(branch: any[] = [], overrides: Record<string, any> = {}) {
 
 const defaultConfig = {
   reviewEnabled: true,
+  reviewTransport: "subprocess" as const,
   nudgeInterval: 10,
   reviewRecentMessages: 0,
   flushMinTurns: 6,
@@ -133,8 +140,24 @@ describe("setupBackgroundReview", () => {
   beforeEach(() => {
     handlers = {};
     execCalls = [];
+    directCalls = [];
     notifyCalls = [];
   });
+
+  function setupWithDirectDeps(
+    pi: ReturnType<typeof createMockPi>,
+    directResult: DirectReviewResult,
+    config = { ...defaultConfig, reviewTransport: "direct" as const },
+  ) {
+    setupBackgroundReview(pi, mockStore, null, config, {
+      deps: {
+        runDirectReview: async (...args: any[]) => {
+          directCalls.push(args);
+          return directResult;
+        },
+      },
+    });
+  }
 
   it("increments user turn count on message_end for user messages", () => {
     const pi = createMockPi();
@@ -659,6 +682,87 @@ describe("setupBackgroundReview", () => {
     await settle();
 
     assert.strictEqual(execCalls.length, 0, "exec should NOT be called — no toolCall blocks, turn threshold not met");
+  });
+
+  it("uses direct review by default and does not call subprocess", async () => {
+    const pi = createMockPi();
+    setupWithDirectDeps(pi, { ok: true, appliedCount: 1 }, {
+      ...defaultConfig,
+      reviewTransport: "direct",
+    });
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await settle();
+
+    assert.strictEqual(directCalls.length, 1, "direct review should run once");
+    assert.strictEqual(execCalls.length, 0, "subprocess should not run on successful direct review");
+    const reviewNotify = notifyCalls.find((n) => n.msg.includes("Memory auto-reviewed"));
+    assert.ok(reviewNotify, "should notify when direct review applies memory");
+  });
+
+  it("falls back to subprocess when direct review cannot run", async () => {
+    const pi = createMockPi();
+    setupWithDirectDeps(pi, { ok: false, appliedCount: 0, fallbackReason: "no_model" }, {
+      ...defaultConfig,
+      reviewTransport: "direct",
+    });
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await settle();
+
+    assert.strictEqual(directCalls.length, 1, "direct review should be attempted first");
+    assert.strictEqual(execCalls.length, 1, "subprocess should run as fallback");
+  });
+
+  it("does not notify when direct review returns no operations", async () => {
+    const pi = createMockPi();
+    setupWithDirectDeps(pi, { ok: true, appliedCount: 0, fallbackReason: "empty" }, {
+      ...defaultConfig,
+      reviewTransport: "direct",
+    });
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await settle();
+
+    const reviewNotify = notifyCalls.find((n) => n.msg.includes("Memory auto-reviewed"));
+    assert.strictEqual(reviewNotify, undefined, "empty direct review should not notify");
+    assert.strictEqual(execCalls.length, 0, "empty direct review should not fall back");
+  });
+
+  it("builds separate prompts for direct and subprocess transports", () => {
+    const input = {
+      parts: ["[USER] hello", "[ASSISTANT] hi"],
+      currentMemory: "uses pnpm",
+      currentUser: "likes TypeScript",
+      currentProject: "monorepo layout",
+    };
+
+    const subprocessPrompt = buildSubprocessReviewPrompt(input);
+    const directPrompt = buildDirectReviewUserPrompt(input);
+
+    assert.match(subprocessPrompt, /save using the memory tool/i);
+    assert.match(directPrompt, /Conversation to Review/);
+    assert.doesNotMatch(directPrompt, /save using the memory tool/i);
+    assert.ok(subprocessPrompt.includes("uses pnpm"));
+    assert.ok(directPrompt.includes("monorepo layout"));
   });
 
   it("falls back gracefully if getBranch throws", async () => {
