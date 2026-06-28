@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.22] - 2026-06-28
+
+### Fixed
+
+- **Release dependency alignment**: aligned direct `@earendil-works/pi-ai` and `@earendil-works/pi-tui` package ranges with `@earendil-works/pi-coding-agent` 0.80.2 so `npm install` stays lockfile-clean and TypeScript sees a single compatible Pi TUI type surface in CI.
+
+## [0.7.21] - 2026-06-28
+
+### Fixed
+
+- **Custom Pi session directory indexing** ([#90](https://github.com/chandra447/pi-hermes-memory/pull/90)): `/memory-index-sessions` now respects `PI_CODING_AGENT_SESSION_DIR`, so users with custom session storage do not need symlinks.
+- **Legacy `sessions.db` project-column migration** ([#91](https://github.com/chandra447/pi-hermes-memory/pull/91)): older SQLite indexes missing `project` columns on `sessions` or `memories` now migrate automatically and backfill `sessions.project` from the session `cwd`, fixing repeated `no such column: project` errors after upgrades.
+
 ## [0.7.20] - 2026-06-25
 
 ### Fixed
