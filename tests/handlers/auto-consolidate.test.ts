@@ -10,11 +10,38 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { registerConsolidateCommand, triggerConsolidation } from "../../src/handlers/auto-consolidate.js";
 import { resolveChildPiInvocation } from "../../src/handlers/pi-child-process.js";
+import { MemoryStore } from "../../src/store/memory-store.js";
+import { AtomicLockCoordinator } from "../../src/store/atomic-lock-coordinator.js";
 import { ENTRY_DELIMITER } from "../../src/constants.js";
 
 // ─── Mock infrastructure ───
 
 let execCalls: any[];
+let LOCK_DIR = "";
+const OLD_LOCK_DIR = process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR;
+
+function captureExecArgs(args: any[]): any[] {
+  const [command, childArgs, options] = args;
+  const capturedArgs = [...childArgs];
+  const promptReference = capturedArgs.at(-1);
+  if (typeof promptReference === "string" && promptReference.startsWith("@")) {
+    capturedArgs[capturedArgs.length - 1] = readFileSync(promptReference.slice(1), "utf-8");
+  }
+  return [command, capturedArgs, options];
+}
+before(async () => {
+  LOCK_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "pi-consolidation-lock-"));
+  process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR = LOCK_DIR;
+});
+
+after(async () => {
+  if (OLD_LOCK_DIR === undefined) {
+    delete process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR;
+  } else {
+    process.env.PI_HERMES_CONSOLIDATION_LOCK_DIR = OLD_LOCK_DIR;
+  }
+  try { await fs.rm(LOCK_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
+});
 
 function captureExecArgs(args: any[]): any[] {
   const [command, childArgs, options] = args;
@@ -57,6 +84,7 @@ const mockStore = {
   getMemoryEntries: () => ["old entry 1", "old entry 2"],
   getUserEntries: () => ["user fact 1"],
   getAllFailureEntries: () => ["failure lesson 1", "failure lesson 2"],
+  getStorageIdentity: async (target: string) => path.join("mock-store", target),
   loadFromDisk: async () => {},
 } as any;
 
@@ -91,6 +119,108 @@ describe("triggerConsolidation", () => {
 
     assert.strictEqual(result.consolidated, true);
     assert.strictEqual(result.error, undefined);
+  });
+
+  it("clears a failed release before the next consolidation", async () => {
+    const prototype = AtomicLockCoordinator.prototype as any;
+    const originalDeleteOwnedLock = prototype.deleteOwnedLock;
+    let deleteAttempts = 0;
+    prototype.deleteOwnedLock = function (key: string, token: string): void {
+      deleteAttempts++;
+      if (deleteAttempts <= 3) throw new Error("injected consolidation release failure");
+      return originalDeleteOwnedLock.call(this, key, token);
+    };
+
+    try {
+      const pi = createMockPi();
+      const first = await triggerConsolidation(pi, mockStore, "memory");
+      const second = await triggerConsolidation(pi, mockStore, "memory");
+
+      assert.strictEqual(first.consolidated, true);
+      assert.strictEqual(second.consolidated, true);
+      assert.strictEqual(execCalls.length, 2);
+      assert.ok(deleteAttempts >= 4);
+    } finally {
+      prototype.deleteOwnedLock = originalDeleteOwnedLock;
+    }
+  });
+
+  it("skips a duplicate subprocess while the same target is consolidating", async () => {
+    const releaseExecs: Array<() => void> = [];
+    let markExecStarted!: () => void;
+    const execStarted = new Promise<void>((resolve) => { markExecStarted = resolve; });
+    const pi = {
+      on: () => {},
+      exec: async (...args: any[]) => {
+        execCalls.push(captureExecArgs(args));
+        markExecStarted();
+        await new Promise<void>((resolve) => { releaseExecs.push(resolve); });
+        return { code: 0, stdout: "Done", stderr: "" };
+      },
+      registerTool: () => {},
+      registerCommand: () => {},
+    } as any;
+
+    const first = triggerConsolidation(pi, mockStore, "memory");
+    await execStarted;
+    const second = triggerConsolidation(pi, mockStore, "memory");
+    const raced = await Promise.race([
+      second.then((result) => ({ result })),
+      settle(100).then(() => ({ timeout: true as const })),
+    ]);
+
+    releaseExecs.forEach((release) => release());
+    await Promise.allSettled([first, second]);
+
+    assert.ok("result" in raced, "duplicate consolidation should return without spawning another child");
+    assert.strictEqual(raced.result.consolidated, false);
+    assert.match(raced.result.error!, /already in progress/i);
+    assert.strictEqual(execCalls.length, 1, "only one child Pi process should be spawned");
+  });
+
+  it("allows the same project target to consolidate concurrently in distinct stores", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-consolidation-stores-"));
+    const stores = ["project-a", "project-b"].map((name) => new MemoryStore({
+      memoryDir: path.join(root, name),
+      memoryCharLimit: 5_000,
+      userCharLimit: 5_000,
+    } as any));
+    await Promise.all(stores.map((store) => store.loadFromDisk()));
+
+    let started = 0;
+    let markFirstStarted!: () => void;
+    let markBothStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const bothStarted = new Promise<void>((resolve) => { markBothStarted = resolve; });
+    const releases: Array<() => void> = [];
+    const pi = {
+      exec: async () => {
+        started++;
+        if (started === 1) markFirstStarted();
+        if (started === 2) markBothStarted();
+        await new Promise<void>((resolve) => { releases.push(resolve); });
+        return { code: 0, stdout: "Done", stderr: "" };
+      },
+    } as any;
+
+    try {
+      const first = triggerConsolidation(pi, stores[0], "memory", undefined, 60_000, "project");
+      await firstStarted;
+      const second = triggerConsolidation(pi, stores[1], "memory", undefined, 60_000, "project");
+      const raced = await Promise.race([
+        bothStarted.then(() => "both-started" as const),
+        settle(100).then(() => "timeout" as const),
+      ]);
+
+      releases.forEach((release) => release());
+      await Promise.allSettled([first, second]);
+
+      assert.strictEqual(raced, "both-started");
+      assert.strictEqual(started, 2);
+    } finally {
+      releases.forEach((release) => release());
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it("returns { consolidated: false } on failure (non-zero exit code)", async () => {
@@ -225,6 +355,7 @@ describe("triggerConsolidation", () => {
     const emptyStore = {
       getMemoryEntries: () => [],
       getUserEntries: () => [],
+      getStorageIdentity: async (target: string) => path.join("empty-store", target),
       loadFromDisk: async () => {},
     } as any;
 
@@ -261,6 +392,7 @@ describe("registerConsolidateCommand", () => {
     const projectStore = {
       getMemoryEntries: () => ["project fact"],
       getUserEntries: () => [],
+      getStorageIdentity: async (target: string) => path.join("project-store", target),
       loadFromDisk: async () => { projectReloaded = true; },
     } as any;
 
