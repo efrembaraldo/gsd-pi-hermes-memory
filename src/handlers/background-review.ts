@@ -206,22 +206,26 @@ export function setupBackgroundReview(
 
     const runReview = async (): Promise<void> => {
       if (usesDirectTransport(config)) {
-        const directResult = await runDirectReview(
-          ctx as Pick<ExtensionContext, "model" | "modelRegistry">,
-          store,
-          projectStore,
-          { userPrompt: directPrompt, systemPrompt: DIRECT_REVIEW_SYSTEM_PROMPT, config, timeoutMs: 120000 },
-          dbManager,
-          projectName,
-        );
+        try {
+          const directResult = await runDirectReview(
+            ctx as Pick<ExtensionContext, "model" | "modelRegistry">,
+            store,
+            projectStore,
+            { userPrompt: directPrompt, systemPrompt: DIRECT_REVIEW_SYSTEM_PROMPT, config, timeoutMs: 120000 },
+            dbManager,
+            projectName,
+          );
 
-        if (directResult.ok) {
-          notifyIfSaved(shouldNotifyDirect(directResult));
-          return;
-        }
+          if (directResult.ok) {
+            notifyIfSaved(shouldNotifyDirect(directResult));
+            return;
+          }
 
-        if (directResult.fallbackReason === "empty") {
-          return;
+          if (directResult.fallbackReason === "empty") {
+            return;
+          }
+        } catch {
+          // Fall through to subprocess below.
         }
       }
 

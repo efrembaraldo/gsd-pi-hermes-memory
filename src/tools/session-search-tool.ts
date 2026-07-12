@@ -178,10 +178,10 @@ Returns bounded conversation snippets with session dates and project context. La
       const role = args.role;
       const requestedLimit = Number.isFinite(args.limit) ? Math.floor(args.limit!) : 10;
       const limit = Math.min(Math.max(requestedLimit, 1), 20);
-      const snippetChars = Math.min(
-        Math.max(Math.floor(args.snippetChars ?? DEFAULT_LEGACY_SNIPPET_CHARS), 100),
-        MAX_LEGACY_SNIPPET_CHARS,
-      );
+      const requestedSnippetChars = Number.isFinite(args.snippetChars)
+        ? Math.floor(args.snippetChars!)
+        : DEFAULT_LEGACY_SNIPPET_CHARS;
+      const snippetChars = Math.min(Math.max(requestedSnippetChars, 100), MAX_LEGACY_SNIPPET_CHARS);
 
       if (!query || query.trim().length === 0) {
         const result: SearchResult = { success: false, message: 'query is required' };

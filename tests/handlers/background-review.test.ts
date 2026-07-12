@@ -768,6 +768,28 @@ describe("setupBackgroundReview", () => {
     assert.strictEqual(execCalls.length, 1, "subprocess should run as fallback");
   });
 
+  it("falls back to subprocess when direct review throws", async () => {
+    const pi = createMockPi();
+    setup(pi, { ...defaultConfig, reviewTransport: "direct" } as MemoryConfig, {
+      runDirectReview: async (...args: any[]) => {
+        directCalls.push(args);
+        throw new Error("direct transport exploded");
+      },
+    });
+
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+    fireMessageEnd("user");
+
+    for (let i = 0; i < 10; i++) {
+      fireTurnEnd();
+    }
+    await reviewSettledSignal.promise;
+
+    assert.strictEqual(directCalls.length, 1, "direct review should be attempted first");
+    assert.strictEqual(execCalls.length, 1, "subprocess should run as fallback when direct review throws");
+  });
+
   it("does not notify when direct review returns no operations", async () => {
     const pi = createMockPi();
     setupWithDirectDeps(pi, { ok: true, appliedCount: 0, fallbackReason: "empty" }, {

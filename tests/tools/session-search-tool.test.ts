@@ -78,6 +78,53 @@ describe("registerSessionSearchTool", () => {
     }
   });
 
+  it("clamps non-finite snippetChars values instead of propagating NaN", async () => {
+    let captured: any;
+    const mockPi = {
+      registerTool: (def: any) => { captured = def; },
+    } as any;
+    const memoryDir = makeSessionsDir();
+    const dbManager = new DatabaseManager(memoryDir);
+
+    try {
+      indexSession(dbManager, {
+        id: "nan-snippet-session",
+        project: "nan-snippet-project",
+        cwd: "/work/nan-snippet",
+        startedAt: "2026-07-11T00:00:00.000Z",
+        endedAt: null,
+        messages: [{
+          id: "nan-snippet-message",
+          role: "assistant",
+          content: `needle ${"a".repeat(500)}`,
+          timestamp: "2026-07-11T00:01:00.000Z",
+        }],
+      });
+      registerSessionSearchTool(mockPi, dbManager);
+
+      const nanResult = await captured.execute("tc-nan-snippet", {
+        query: "needle",
+        snippetChars: NaN,
+      });
+      const infinityResult = await captured.execute("tc-infinity-snippet", {
+        query: "needle",
+        snippetChars: Infinity,
+      });
+      const largeResult = await captured.execute("tc-large-snippet", {
+        query: "needle",
+        snippetChars: 999_999_999,
+      });
+
+      assert.strictEqual(nanResult.details.snippetChars, 1_200);
+      assert.strictEqual(infinityResult.details.snippetChars, 1_200);
+      assert.strictEqual(largeResult.details.snippetChars, 4_000);
+      assert.ok(Number.isFinite(nanResult.details.snippetChars));
+      assert.match(nanResult.content[0].text, /needle a+/);
+    } finally {
+      dbManager.close();
+    }
+  });
+
   it("bounds oversized legacy results and reports truncation without duplicating output in details", async () => {
     let captured: any;
     const mockPi = {
