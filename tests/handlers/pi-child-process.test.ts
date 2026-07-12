@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,13 +11,14 @@ import {
   execChildPrompt,
   inheritedExtensionArgs,
   resolveChildPiInvocation,
+  resolveWatchedChildPiInvocation,
 } from "../../src/handlers/pi-child-process.js";
 
 function logicalChildArgs(call: { cmd: string; args: string[] }): string[] {
-  const expected = resolveChildPiInvocation(call.cmd === "pi" ? call.args : call.args.slice(1));
-  assert.strictEqual(call.cmd, expected.command);
-  assert.deepStrictEqual(call.args, expected.args);
-  return call.cmd === "pi" ? call.args : call.args.slice(1);
+  const underlying = { command: call.args[3], args: call.args.slice(4) };
+  const expected = resolveWatchedChildPiInvocation(underlying, 30000, call.args[2]);
+  assert.deepStrictEqual(call, { cmd: expected.command, args: expected.args });
+  return underlying.command === "pi" ? underlying.args : underlying.args.slice(1);
 }
 
 // Compute the expected OWN_EXTENSION_PATH same logic as pi-child-process.ts
@@ -303,17 +305,193 @@ describe("resolveChildPiInvocation", () => {
     );
   });
 
-  it("falls back to the existing pi invocation on Windows if cli.js cannot be resolved", () => {
-    const args = ["-p", "--no-session", "hello"];
-
-    assert.deepStrictEqual(
-      resolveChildPiInvocation(args, { platform: "win32", piCliPath: null }),
-      { command: "pi", args },
+  it("resolves a standard Windows command shim to its adjacent cli.js", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-windows-shim-"));
+    const binDirectory = path.join(directory, "bin");
+    const cliPath = path.join(
+      binDirectory,
+      "node_modules",
+      "@earendil-works",
+      "pi-coding-agent",
+      "dist",
+      "cli.js",
     );
+    const args = ["-p", "--no-session", "hello"];
+    const originalPath = process.env.PATH;
+
+    await fs.mkdir(path.dirname(cliPath), { recursive: true });
+    await fs.writeFile(path.join(binDirectory, "pi.cmd"), "@echo off\r\n");
+    await fs.writeFile(cliPath, "");
+    process.env.PATH = `${binDirectory};C:\\Windows\\System32`;
+    try {
+      assert.deepStrictEqual(
+        resolveChildPiInvocation(args, {
+          platform: "win32",
+          execPath: "C:\\Program Files\\nodejs\\node.exe",
+          piCliPath: null,
+        }),
+        {
+          command: "C:\\Program Files\\nodejs\\node.exe",
+          args: [cliPath, ...args],
+        },
+      );
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
 describe("execChildPrompt", () => {
+  it("runs child Pi behind a hard process-tree watchdog", async () => {
+    const calls: Array<{ cmd: string; args: string[]; timeout?: number }> = [];
+    await execChildPrompt({
+      exec: async (cmd: string, args: string[], options: { timeout?: number }) => {
+        calls.push({ cmd, args, timeout: options.timeout });
+        return { code: 0, stdout: "ok", stderr: "", killed: false };
+      },
+    } as any, "bounded child", {}, { timeoutMs: 30000 });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].cmd, process.execPath);
+    assert.match(calls[0].args[0].replaceAll("\\", "/"), /child-process-watchdog\.mjs$/);
+    assert.equal(calls[0].args[1], "30000");
+    assert.match(calls[0].args[2], /cancel$/);
+    assert.equal(calls[0].args[3], "pi");
+    assert.equal(calls[0].timeout, 35000);
+  });
+
+  it("cancels through the watchdog without forwarding the abort signal to pi.exec", async () => {
+    const abortController = new AbortController();
+    let cancelPath = "";
+    const result = await execChildPrompt({
+      exec: async (_cmd: string, args: string[], options: { signal?: AbortSignal }) => {
+        cancelPath = args[2];
+        assert.equal(options.signal, undefined);
+        abortController.abort();
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+          try {
+            await fs.access(cancelPath);
+            return { code: 143, stderr: "child cancelled" };
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        assert.fail("abort did not notify the watchdog");
+      },
+    } as any, "cancel child", {}, {
+      signal: abortController.signal,
+      timeoutMs: 30000,
+    });
+
+    assert.equal(result.code, 143);
+    await assert.rejects(fs.access(cancelPath), { code: "ENOENT" });
+  });
+
+  it("hard-kills a child that ignores graceful timeout termination", async () => {
+    const watchdogPath = fileURLToPath(
+      new URL("../../src/handlers/child-process-watchdog.mjs", import.meta.url),
+    );
+    const startedAt = Date.now();
+    const result = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, [
+        watchdogPath,
+        "100",
+        "-",
+        process.execPath,
+        "-e",
+        "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)",
+      ], { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+
+    assert.equal(result.code, 124);
+    assert.match(result.stderr, /timed out after 100ms/i);
+    assert.ok(Date.now() - startedAt < 3000, "watchdog must enforce a bounded hard stop");
+  });
+
+  it("terminates the child tree when its cancellation marker appears", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-watchdog-cancel-"));
+    const cancelPath = path.join(directory, "cancel");
+    const watchdogPath = fileURLToPath(
+      new URL("../../src/handlers/child-process-watchdog.mjs", import.meta.url),
+    );
+    const startedAt = Date.now();
+    try {
+      const result = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+        const child = spawn(process.execPath, [
+          watchdogPath,
+          "10000",
+          cancelPath,
+          process.execPath,
+          "-e",
+          "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)",
+        ], { stdio: ["ignore", "ignore", "pipe"] });
+        let stderr = "";
+        child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+        child.on("close", (code) => resolve({ code, stderr }));
+        setTimeout(() => void fs.writeFile(cancelPath, ""), 100);
+      });
+
+      assert.equal(result.code, 143);
+      assert.match(result.stderr, /child cancellation requested/i);
+      assert.ok(Date.now() - startedAt < 3000, "watchdog cancellation must be bounded");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("hard-kills descendants in the timed-out child process group", {
+    skip: process.platform === "win32" ? "uses taskkill /T on Windows" : false,
+  }, async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-watchdog-tree-"));
+    const pidPath = path.join(directory, "descendant.pid");
+    const watchdogPath = fileURLToPath(
+      new URL("../../src/handlers/child-process-watchdog.mjs", import.meta.url),
+    );
+    const descendant = "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)";
+    const parent = [
+      "const {spawn}=require('node:child_process');",
+      "const fs=require('node:fs');",
+      `const child=spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'ignore'});`,
+      `fs.writeFileSync(${JSON.stringify(pidPath)},String(child.pid));`,
+      "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);",
+    ].join("");
+
+    try {
+      const code = await new Promise<number | null>((resolve) => {
+        const child = spawn(process.execPath, [
+          watchdogPath,
+          "100",
+          "-",
+          process.execPath,
+          "-e",
+          parent,
+        ], { stdio: "ignore" });
+        child.on("close", resolve);
+      });
+      assert.equal(code, 124);
+      const descendantPid = Number(await fs.readFile(pidPath, "utf-8"));
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+          throw error;
+        }
+      }
+      assert.fail("watchdog left a descendant process alive");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a sensitive prompt out of argv and removes its mode-0600 temporary file", async () => {
     const secret = "PRIVATE-MEMORY-CONTENT";
     let promptPath = "";
@@ -478,7 +656,22 @@ describe("execChildPrompt", () => {
   });
 
   it("uses the resolved Windows node.exe invocation for both override retry attempts", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pi-windows-retry-"));
+    const binDirectory = path.join(directory, "bin");
+    const cliPath = path.join(
+      binDirectory,
+      "node_modules",
+      "@earendil-works",
+      "pi-coding-agent",
+      "dist",
+      "cli.js",
+    );
     const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+    const originalPath = process.env.PATH;
+    await fs.mkdir(path.dirname(cliPath), { recursive: true });
+    await fs.writeFile(path.join(binDirectory, "pi.cmd"), "@echo off\r\n");
+    await fs.writeFile(cliPath, "");
+    process.env.PATH = `${binDirectory};C:\\Windows\\System32`;
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
     try {
       const calls: Array<{ cmd: string; args: string[] }> = [];
@@ -503,16 +696,19 @@ describe("execChildPrompt", () => {
       assert.strictEqual(calls.length, 2);
       assert.strictEqual(calls[0].cmd, process.execPath);
       assert.strictEqual(calls[1].cmd, process.execPath);
-      assert.match(calls[0].args[0].replace(/\\/g, "/"), /\/cli\.js$/);
-      assert.match(calls[1].args[0].replace(/\\/g, "/"), /\/cli\.js$/);
+      assert.match(calls[0].args[4].replace(/\\/g, "/"), /\/cli\.js$/);
+      assert.match(calls[1].args[4].replace(/\\/g, "/"), /\/cli\.js$/);
       const promptReference = calls[0].args.at(-1)!;
       assert.match(promptReference, /^@/);
-      assert.deepStrictEqual(calls.map((call) => call.args.slice(1)), [
+      assert.deepStrictEqual(calls.map(logicalChildArgs), [
         ["-p", "--no-session", "--model", "openrouter/deepseek/deepseek-v4-flash", "--thinking", "off", ...EXT_ARGS, promptReference],
         ["-p", "--no-session", ...EXT_ARGS, promptReference],
       ]);
     } finally {
       if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await fs.rm(directory, { recursive: true, force: true });
     }
   });
 
