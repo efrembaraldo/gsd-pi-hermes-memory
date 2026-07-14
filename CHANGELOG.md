@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-07-14
+
+### Fixed
+
+- **Published package exposed unusable `check`/`test` scripts** ([#108](https://github.com/chandra447/pi-hermes-memory/issues/108)): `npm run check` and `npm test` are source-checkout-only (they need TypeScript, `tsconfig.json`, and `tests/`, none of which ship in the production tarball). Running them after `pi install` now fails with a clear message pointing at a git clone + `npm install`, instead of cryptic `tsc: not found` / `tests/run-all.sh: not found` errors. Runtime extension behavior is unchanged; CI still runs these scripts before publish.
+
 ## [0.8.0] - 2026-07-12
 
 ### Fixed

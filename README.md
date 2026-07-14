@@ -92,6 +92,18 @@ Every write — memory and skills — passes through a scanner before being acce
 
 ![Security: Content Scanning](docs/images/security-flow.svg)
 
+## Development
+
+`npm run check` and `npm test` only work from a **full git checkout** after `npm install`. The published npm package intentionally omits `tests/`, TypeScript, and `tsconfig.json` (production install for Pi). Validate from source or rely on CI before publish.
+
+```bash
+git clone https://github.com/chandra447/pi-hermes-memory.git
+cd pi-hermes-memory
+npm install
+npm run check
+npm test
+```
+
 ## Installation
 
 ```bash
