@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-07-26
+
+### Fixed
+
+- **Compiled Pi failed to load the extension at all** ([#117](https://github.com/chandra447/pi-hermes-memory/issues/117)): `src/extension-root-migration.ts` resolved `better-sqlite3` at module scope, and `src/index.ts` imports it during extension load. Compiled Pi runs on Bun, whose resolver cannot find `better-sqlite3` (nor its transitive `bindings`) from an on-disk extension file, so every session started with `Failed to load extension: ResolveMessage: Cannot find package 'better-sqlite3'` and the whole extension was dead. The legacy-root migration now resolves SQLite lazily and routes through `bun:sqlite` under Bun, matching what `db.ts` and `atomic-lock-coordinator.ts` already did. Those two also defer their native load out of module scope, so an ABI mismatch now surfaces as an actionable in-session error (the recovery guidance added in 0.8.2) instead of a fatal extension-load failure.
+
 ## [0.8.2] - 2026-07-21
 
 ### Fixed
