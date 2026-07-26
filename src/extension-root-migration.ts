@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { AtomicLockCoordinator, type AtomicLockLease } from "./store/atomic-lock-coordinator.js";
 import { canonicalStoragePathSync } from "./store/canonical-storage-path.js";
-import { loadBetterSqlite3 } from "./store/sqlite-native.js";
+import { createRequire } from "node:module";
+import { isBunRuntime, loadBetterSqlite3 } from "./store/sqlite-native.js";
 
 type MigrationDatabase = {
   exec: (sql: string) => void;
@@ -22,7 +23,94 @@ type MigrationDatabaseCtor = new (
   options?: { readonly?: boolean; fileMustExist?: boolean; timeout?: number },
 ) => MigrationDatabase;
 
-const Database = loadBetterSqlite3() as MigrationDatabaseCtor;
+type BunDatabaseInstance = {
+  exec: (sql: string) => void;
+  prepare: (sql: string) => { get: (...args: unknown[]) => unknown; run: (...args: unknown[]) => unknown };
+  close: () => void;
+};
+
+/**
+ * bun:sqlite shim covering the slice of the better-sqlite3 API this migration
+ * uses. Compiled Pi cannot resolve better-sqlite3 at all, so under Bun this is
+ * the only way the legacy-root migration can touch sessions.db.
+ */
+function createBunMigrationDatabaseCtor(): MigrationDatabaseCtor {
+  const require = createRequire(import.meta.url);
+  const bunSqlite = require("bun:sqlite") as {
+    Database: new (
+      dbPath: string,
+      options?: { readonly?: boolean; readwrite?: boolean; create?: boolean },
+    ) => BunDatabaseInstance;
+  };
+
+  return class BunMigrationDatabase implements MigrationDatabase {
+    private readonly db: BunDatabaseInstance;
+
+    constructor(
+      dbPath: string,
+      options: { readonly?: boolean; fileMustExist?: boolean; timeout?: number } = {},
+    ) {
+      const readonly = options.readonly === true;
+      this.db = new bunSqlite.Database(dbPath, {
+        readonly,
+        readwrite: !readonly,
+        create: !readonly && options.fileMustExist !== true,
+      });
+      if (typeof options.timeout === "number") {
+        this.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(options.timeout))}`);
+      }
+    }
+
+    exec(sql: string): void {
+      this.db.exec(sql);
+    }
+
+    prepare(sql: string): { get: (...args: unknown[]) => unknown; run: (...args: unknown[]) => unknown } {
+      return this.db.prepare(sql);
+    }
+
+    close(): void {
+      this.db.close();
+    }
+
+    pragma(query: string, options?: { simple?: boolean }): unknown {
+      if (query.includes("=")) {
+        this.db.exec(`PRAGMA ${query}`);
+        return undefined;
+      }
+      const row = this.db.prepare(`PRAGMA ${query}`).get();
+      if (typeof row !== "object" || row === null) return options?.simple ? row : [];
+      return options?.simple ? Object.values(row)[0] : [row];
+    }
+
+    /**
+     * bun:sqlite exposes no online backup API. `VACUUM INTO` writes an
+     * equivalent consistent snapshot under a read transaction, but has no
+     * incremental callback, so the heartbeat only fires either side of it.
+     */
+    async backup(destination: string, options?: { progress?: () => void }): Promise<void> {
+      options?.progress?.();
+      this.db.prepare("VACUUM INTO ?").run(destination);
+      options?.progress?.();
+    }
+  };
+}
+
+let cachedDatabaseCtor: MigrationDatabaseCtor | null = null;
+
+/**
+ * Resolved on first use, never at import time: this module is pulled in by
+ * src/index.ts at extension load, and a module-scope native load turns any
+ * SQLite resolve/ABI failure into "Failed to load extension" (issue #117).
+ */
+function getDatabaseCtor(): MigrationDatabaseCtor {
+  if (!cachedDatabaseCtor) {
+    cachedDatabaseCtor = isBunRuntime()
+      ? createBunMigrationDatabaseCtor()
+      : (loadBetterSqlite3() as MigrationDatabaseCtor);
+  }
+  return cachedDatabaseCtor;
+}
 const DATABASE_FILES = ["sessions.db", "sessions.db-wal", "sessions.db-shm"] as const;
 const DATABASE_MIGRATION_PENDING_FILE = ".sessions-db-migration-pending";
 
@@ -102,6 +190,7 @@ async function stageDatabaseSnapshot(
   staged: string,
   onProgress?: () => void,
 ): Promise<void> {
+  const Database = getDatabaseCtor();
   const sourceDb = new Database(source, { readonly: true, fileMustExist: true });
   try {
     await sourceDb.backup(staged, {
@@ -390,7 +479,7 @@ async function migrateDatabaseGeneration(
     const staged = path.join(stagingDir, "sessions.db");
     const sourceState = await fs.lstat(source);
     try {
-      writeLock = new Database(source, { fileMustExist: true, timeout: 0 });
+      writeLock = new (getDatabaseCtor())(source, { fileMustExist: true, timeout: 0 });
       writeLock.pragma("busy_timeout = 0");
       writeLock.exec("BEGIN IMMEDIATE");
     } catch (error) {
@@ -448,7 +537,15 @@ async function migrateDatabaseGeneration(
       published.set(target, await fileIdentity(target));
     }
 
-    if (writeLock) writeLock.exec("COMMIT");
+    if (writeLock) {
+      // Every generation file has already been moved out of legacyRoot, so this
+      // transaction can no longer guard anything and its database no longer
+      // exists at this path. bun:sqlite reports SQLITE_IOERR here where
+      // better-sqlite3 succeeds; either way a failed cleanup COMMIT must not
+      // roll back an otherwise completed migration.
+      // The connection is closed in `finally` either way.
+      try { writeLock.exec("COMMIT"); } catch {}
+    }
     result.moved += generationNames.length;
   } catch (error) {
     for (const [target, identity] of [...published.entries()].reverse()) {

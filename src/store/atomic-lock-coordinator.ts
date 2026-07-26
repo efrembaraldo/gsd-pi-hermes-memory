@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { loadBetterSqlite3 } from './sqlite-native.js';
+import { isBunRuntime, loadBetterSqlite3 } from './sqlite-native.js';
 
 type StatementLike = {
   run: (...args: unknown[]) => unknown;
@@ -34,16 +34,24 @@ export interface AtomicLockCoordinatorOptions {
   probeIncarnation?: (pid: number) => string | null;
 }
 
-function loadDatabaseCtor(): DatabaseCtor {
-  const require = createRequire(import.meta.url);
-  if (typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined') {
-    const bunSqlite = require('bun:sqlite') as { Database: DatabaseCtor };
-    return bunSqlite.Database;
-  }
-  return loadBetterSqlite3({ requireImpl: require }) as DatabaseCtor;
-}
+let cachedDatabaseCtor: DatabaseCtor | null = null;
 
-const Database = loadDatabaseCtor();
+/**
+ * Resolved on first use, never at import time — see the same note in db.ts.
+ * Compiled Pi cannot resolve better-sqlite3 at all, so Bun must take bun:sqlite.
+ */
+function getDatabaseCtor(): DatabaseCtor {
+  if (!cachedDatabaseCtor) {
+    const require = createRequire(import.meta.url);
+    if (isBunRuntime()) {
+      const bunSqlite = require('bun:sqlite') as { Database: DatabaseCtor };
+      cachedDatabaseCtor = bunSqlite.Database;
+    } else {
+      cachedDatabaseCtor = loadBetterSqlite3({ requireImpl: require }) as DatabaseCtor;
+    }
+  }
+  return cachedDatabaseCtor;
+}
 
 function processIsAlive(pid: number): boolean {
   try {
@@ -220,7 +228,7 @@ export class AtomicLockCoordinator {
   private open(): DatabaseLike {
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
     const existed = fs.existsSync(this.dbPath);
-    const db = new Database(this.dbPath);
+    const db = new (getDatabaseCtor())(this.dbPath);
     try {
       db.exec(`
         PRAGMA busy_timeout = 5000;

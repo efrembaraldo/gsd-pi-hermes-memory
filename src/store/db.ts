@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { SCHEMA_SQL } from './schema.js';
 import { AtomicLockCoordinator } from './atomic-lock-coordinator.js';
 import { canonicalStoragePathSync } from './canonical-storage-path.js';
-import { loadBetterSqlite3 } from './sqlite-native.js';
+import { isBunRuntime, loadBetterSqlite3 } from './sqlite-native.js';
 
 type StatementLike = {
   run: (...args: any[]) => any;
@@ -120,18 +120,22 @@ function createBunCompatDatabaseCtor(require: NodeRequire): DatabaseCtor {
   };
 }
 
-function loadDatabaseCtor(): DatabaseCtor {
-  const require = createRequire(import.meta.url);
-  const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined';
+let cachedDatabaseCtor: DatabaseCtor | null = null;
 
-  if (isBunRuntime) {
-    return createBunCompatDatabaseCtor(require);
+/**
+ * Resolved on first use, never at import time. A module-scope native load turns
+ * any SQLite resolve/ABI failure into "Failed to load extension", which hides
+ * the actionable rebuild message and bricks the whole extension (issue #117).
+ */
+function getDatabaseCtor(): DatabaseCtor {
+  if (!cachedDatabaseCtor) {
+    const require = createRequire(import.meta.url);
+    cachedDatabaseCtor = isBunRuntime()
+      ? createBunCompatDatabaseCtor(require)
+      : (loadBetterSqlite3({ requireImpl: require }) as DatabaseCtor);
   }
-
-  return loadBetterSqlite3({ requireImpl: require }) as DatabaseCtor;
+  return cachedDatabaseCtor;
 }
-
-const Database = loadDatabaseCtor();
 
 export class DatabaseManager {
   private db: DatabaseLike | null = null;
@@ -270,7 +274,7 @@ export class DatabaseManager {
 
   private openUnchecked(): DatabaseLike {
     const existed = this.hasExistingMainDatabaseFile();
-    const db = new Database(this.dbPath);
+    const db = new (getDatabaseCtor())(this.dbPath);
     let ok = false;
 
     try {
@@ -434,7 +438,7 @@ export class DatabaseManager {
     if (!this.hasExistingMainDatabaseFile()) return false;
     let db: DatabaseLike | null = null;
     try {
-      db = new Database(this.dbPath);
+      db = new (getDatabaseCtor())(this.dbPath);
       this.assertIntegrityOk(db, 'quick_check', 'while joining corruption recovery');
       return true;
     } catch {
@@ -546,6 +550,7 @@ export class DatabaseManager {
     let rebuildOk = false;
 
     try {
+      const Database = getDatabaseCtor();
       source = new Database(this.dbPath);
       target = new Database(tempPath);
       target.exec('PRAGMA journal_mode = DELETE');

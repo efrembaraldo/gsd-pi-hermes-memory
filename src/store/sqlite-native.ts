@@ -44,6 +44,18 @@ export class BetterSqlite3LoadError extends Error {
 const ABI_MISMATCH_RE =
   /NODE_MODULE_VERSION|was compiled against a different Node\.js version|ERR_DLOPEN_FAILED/i;
 
+/**
+ * True when running under Bun (including the compiled Pi binary).
+ *
+ * Compiled Pi cannot resolve `better-sqlite3` — neither the bare specifier nor
+ * the package's own transitive `require("bindings")` resolve from an on-disk
+ * extension file, so every code path that needs SQLite must route through
+ * `bun:sqlite` instead of loading the native module.
+ */
+export function isBunRuntime(): boolean {
+  return "Bun" in globalThis;
+}
+
 export function isNativeModuleAbiMismatch(error: unknown): boolean {
   if (!error) return false;
   const message = error instanceof Error ? error.message : String(error);
