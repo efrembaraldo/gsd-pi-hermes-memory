@@ -94,11 +94,13 @@ function probeProcessIncarnation(pid: number): string | null {
 const currentProcessIncarnation = probeProcessIncarnation(process.pid);
 const RELEASE_ATTEMPTS = 3;
 const pendingReleases = new Map<string, () => void>();
+const sharedCoordinators = new Map<string, AtomicLockCoordinator>();
 
 export class AtomicLockCoordinator {
   private readonly pid: number;
   private readonly incarnation: string | null;
   private readonly probeIncarnation: (pid: number) => string | null;
+  private cachedDb: DatabaseLike | null = null;
 
   constructor(private readonly dbPath: string, options: AtomicLockCoordinatorOptions = {}) {
     this.pid = options.pid ?? process.pid;
@@ -116,10 +118,9 @@ export class AtomicLockCoordinator {
     const db = this.open();
     let acquired = false;
 
+    db.exec('BEGIN IMMEDIATE');
     try {
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const owner = db.prepare(`
+      const owner = db.prepare(`
           SELECT token, pid, incarnation, acquired_at
           FROM locks
           WHERE lock_key = ?
@@ -157,12 +158,16 @@ export class AtomicLockCoordinator {
         }
 
         db.exec('COMMIT');
-      } catch (error) {
-        try { db.exec('ROLLBACK'); } catch {}
-        throw error;
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // The transaction is still open on a connection we are about to hand
+        // to the next caller, whose BEGIN IMMEDIATE would then fail forever.
+        // Drop the handle so open() rebuilds it.
+        this.discardCachedDb();
       }
-    } finally {
-      db.close();
+      throw error;
     }
 
     if (!acquired) return null;
@@ -184,12 +189,8 @@ export class AtomicLockCoordinator {
    */
   isCurrentOwner(key: string, token: string): boolean {
     const db = this.open();
-    try {
-      const row = db.prepare('SELECT token FROM locks WHERE lock_key = ?').get(key) as { token: string } | undefined;
-      return row?.token === token;
-    } finally {
-      db.close();
-    }
+    const row = db.prepare('SELECT token FROM locks WHERE lock_key = ?').get(key) as { token: string } | undefined;
+    return row?.token === token;
   }
 
   release(key: string, token: string): void {
@@ -207,11 +208,7 @@ export class AtomicLockCoordinator {
 
   private deleteOwnedLock(key: string, token: string): void {
     const db = this.open();
-    try {
-      db.prepare('DELETE FROM locks WHERE lock_key = ? AND token = ?').run(key, token);
-    } finally {
-      db.close();
-    }
+    db.prepare('DELETE FROM locks WHERE lock_key = ? AND token = ?').run(key, token);
   }
 
   private retryPendingReleases(key: string): void {
@@ -225,7 +222,16 @@ export class AtomicLockCoordinator {
     return `${path.resolve(this.dbPath)}\0${key}\0${token}`;
   }
 
+  private discardCachedDb(): void {
+    const db = this.cachedDb;
+    this.cachedDb = null;
+    if (db) {
+      try { db.close(); } catch {}
+    }
+  }
+
   private open(): DatabaseLike {
+    if (this.cachedDb) return this.cachedDb;
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
     const existed = fs.existsSync(this.dbPath);
     const db = new (getDatabaseCtor())(this.dbPath);
@@ -251,10 +257,30 @@ export class AtomicLockCoordinator {
         }
       }
       if (!existed) fs.chmodSync(this.dbPath, 0o600);
+      this.cachedDb = db;
       return db;
     } catch (error) {
       db.close();
       throw error;
     }
+  }
+
+  /**
+   * Process-wide coordinator for `dbPath`.
+   *
+   * Each instance now pins its SQLite connection for its own lifetime, so a
+   * caller that constructs a fresh coordinator per operation would leak one
+   * open WAL connection per call. Every default-options caller must share.
+   * The option-carrying constructor stays public for tests, which pass a
+   * synthetic pid/incarnation that a dbPath-keyed cache would silently ignore.
+   */
+  static shared(dbPath: string): AtomicLockCoordinator {
+    const key = path.resolve(dbPath);
+    let coordinator = sharedCoordinators.get(key);
+    if (!coordinator) {
+      coordinator = new AtomicLockCoordinator(dbPath);
+      sharedCoordinators.set(key, coordinator);
+    }
+    return coordinator;
   }
 }
