@@ -288,8 +288,13 @@ export function registerMemoryTool(
 		params: MemoryToolParams,
 		signal?: AbortSignal,
 	) => {
-		const { target: rawTarget, content, old_text, category, failure_reason } =
-			params;
+		const {
+			target: rawTarget,
+			content,
+			old_text,
+			category,
+			failure_reason,
+		} = params;
 		const target = rawTarget === "project" ? "memory" : rawTarget;
 		const activeProjectStore = resolveProjectStore(projectStore);
 		const activeProjectName = resolveProjectName(projectName);
@@ -412,15 +417,14 @@ export function registerMemoryTool(
 				syncWarning = reconciliationWarning;
 		}
 
-		if (syncWarning && result.success) result = appendSyncWarning(result, syncWarning);
+		if (syncWarning && result.success)
+			result = appendSyncWarning(result, syncWarning);
 		if (rawTarget === "project" && result.success) {
 			result = { ...result, target: "project" };
 		}
 
 		return {
-			content: [
-				{ type: "text" as const, text: formatMemoryToolText(result) },
-			],
+			content: [{ type: "text" as const, text: formatMemoryToolText(result) }],
 			details: result,
 		};
 	};
@@ -453,13 +457,10 @@ This action-specific tool accepts only the parameters listed in its schema.`;
 		});
 	};
 
-	const target = StringEnum(
-		["memory", "user", "project", "failure"] as const,
-		{
-			description:
-				"Memory scope. Use failure for failures, corrections, insights, and tool quirks.",
-		},
-	);
+	const target = StringEnum(["memory", "user", "project", "failure"] as const, {
+		description:
+			"Memory scope. Use failure for failures, corrections, insights, and tool quirks.",
+	});
 	const category = StringEnum(
 		[
 			"failure",

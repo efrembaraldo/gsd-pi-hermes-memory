@@ -211,102 +211,112 @@ export async function triggerConsolidation(
 	projectName?: string | null,
 	deps: { runDirectMemoryCompletion?: typeof runDirectMemoryCompletion } = {},
 ): Promise<ConsolidationResult> {
-  const entries = entriesForTarget(store, target);
-  const currentContent = entries.join(ENTRY_DELIMITER);
-  const runDirect = deps.runDirectMemoryCompletion ?? runDirectMemoryCompletion;
+	const entries = entriesForTarget(store, target);
+	const currentContent = entries.join(ENTRY_DELIMITER);
+	const runDirect = deps.runDirectMemoryCompletion ?? runDirectMemoryCompletion;
 
-  if (directCtx && usesDirectTransport(llmConfig)) {
-    try {
-      const directResult = await runDirect(
-        directCtx,
-        store,
-        toolTarget === "project" ? store : null,
-        {
-          systemPrompt: DIRECT_CONSOLIDATION_SYSTEM_PROMPT,
-          userPrompt: [
-            `--- Current ${labelForTarget(target, toolTarget)} Entries (target: '${toolTarget}') ---`,
-            currentContent || "(empty)",
-            "",
-            `Only emit operations with "target": "${toolTarget}".`,
-          ].join("\n"),
-          config: llmConfig,
-          timeoutMs,
-          signal,
-          requireAtomicShrink: true,
-          expectedTarget: toolTarget,
-        },
-        dbManager,
-        projectName,
-      );
-      // Consolidation only did its job if it actually freed space — unlike
-      // review/flush/correction, an empty or fully-skipped result here is a
-      // failure worth falling back to subprocess for, not a normal outcome.
-      if (directResult.ok && directResult.appliedCount > 0) {
-        return { consolidated: true };
-      }
-    } catch {
-      // Fall through to subprocess below.
-    }
-  }
+	if (directCtx && usesDirectTransport(llmConfig)) {
+		try {
+			const directResult = await runDirect(
+				directCtx,
+				store,
+				toolTarget === "project" ? store : null,
+				{
+					systemPrompt: DIRECT_CONSOLIDATION_SYSTEM_PROMPT,
+					userPrompt: [
+						`--- Current ${labelForTarget(target, toolTarget)} Entries (target: '${toolTarget}') ---`,
+						currentContent || "(empty)",
+						"",
+						`Only emit operations with "target": "${toolTarget}".`,
+					].join("\n"),
+					config: llmConfig,
+					timeoutMs,
+					signal,
+					requireAtomicShrink: true,
+					expectedTarget: toolTarget,
+				},
+				dbManager,
+				projectName,
+			);
+			// Consolidation only did its job if it actually freed space — unlike
+			// review/flush/correction, an empty or fully-skipped result here is a
+			// failure worth falling back to subprocess for, not a normal outcome.
+			if (directResult.ok && directResult.appliedCount > 0) {
+				return { consolidated: true };
+			}
+		} catch {
+			// Fall through to subprocess below.
+		}
+	}
 
-  let lock: ConsolidationLock | null = null;
+	let lock: ConsolidationLock | null = null;
 
-  try {
-    const attempt = await acquireConsolidationLock(store, target, toolTarget);
-    lock = attempt.lock;
-    if (!lock) {
-      // Not a failure: the work is already running in another session. Say so
-      // plainly so the memory-write path can ask for a retry instead of
-      // reporting a broken consolidation mid-task (#144).
-      return {
-        consolidated: false,
-        deferred: true,
-        error: `Consolidation already in progress for target '${toolTarget}' in another session`
-          + ` (waited ${attempt.waitedMs}ms). Nothing was consolidated here — retry shortly.`,
-      };
-    }
+	try {
+		const attempt = await acquireConsolidationLock(store, target, toolTarget);
+		lock = attempt.lock;
+		if (!lock) {
+			// Not a failure: the work is already running in another session. Say so
+			// plainly so the memory-write path can ask for a retry instead of
+			// reporting a broken consolidation mid-task (#144).
+			return {
+				consolidated: false,
+				deferred: true,
+				error:
+					`Consolidation already in progress for target '${toolTarget}' in another session` +
+					` (waited ${attempt.waitedMs}ms). Nothing was consolidated here — retry shortly.`,
+			};
+		}
 
-    let promptEntries = entries;
-    if (attempt.contended) {
-      // We queued behind another session's consolidation and it has now
-      // finished. If it already freed space, running a second LLM pass here
-      // costs a child turn and over-compresses memory for nothing — hand the
-      // caller a reload-and-retry instead.
-      try {
-        await store.loadFromDisk();
-        const refreshed = entriesForTarget(store, target);
-        if (refreshed.join(ENTRY_DELIMITER).length < currentContent.length) {
-          return { consolidated: true };
-        }
-        promptEntries = refreshed;
-      } catch {
-        // Reload failed — consolidate the entries we already read instead.
-      }
-    }
+		let promptEntries = entries;
+		if (attempt.contended) {
+			// We queued behind another session's consolidation and it has now
+			// finished. If it already freed space, running a second LLM pass here
+			// costs a child turn and over-compresses memory for nothing — hand the
+			// caller a reload-and-retry instead.
+			try {
+				await store.loadFromDisk();
+				const refreshed = entriesForTarget(store, target);
+				if (refreshed.join(ENTRY_DELIMITER).length < currentContent.length) {
+					return { consolidated: true };
+				}
+				promptEntries = refreshed;
+			} catch {
+				// Reload failed — consolidate the entries we already read instead.
+			}
+		}
 
-    const result = await execChildPrompt(pi, buildConsolidationPrompt(target, toolTarget, promptEntries), llmConfig, {
-      signal,
-      timeoutMs,
-      retryWithoutOverrides: true,
-    }) as { code: number; stdout?: string; stderr?: string; killed?: boolean };
+		const result = (await execChildPrompt(
+			pi,
+			buildConsolidationPrompt(target, toolTarget, promptEntries),
+			llmConfig,
+			{
+				signal,
+				timeoutMs,
+				retryWithoutOverrides: true,
+			},
+		)) as { code: number; stdout?: string; stderr?: string; killed?: boolean };
 
-    if (result.code === 0) {
-      return { consolidated: true };
-    }
-    return {
-      consolidated: false,
-      error: describeConsolidationFailure(result, timeoutMs),
-    };
-  } catch (err) {
-    return {
-      consolidated: false,
-      error: `Consolidation failed: ${String(err).slice(0, 200)}`,
-    };
-  } finally {
-    if (lock) {
-      try { await lock.release(); } catch { /* best-effort cleanup */ }
-    }
-  }
+		if (result.code === 0) {
+			return { consolidated: true };
+		}
+		return {
+			consolidated: false,
+			error: describeConsolidationFailure(result, timeoutMs),
+		};
+	} catch (err) {
+		return {
+			consolidated: false,
+			error: `Consolidation failed: ${String(err).slice(0, 200)}`,
+		};
+	} finally {
+		if (lock) {
+			try {
+				await lock.release();
+			} catch {
+				/* best-effort cleanup */
+			}
+		}
+	}
 }
 
 /**
