@@ -5,7 +5,7 @@
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import { StringEnum } from "@gsd/pi-ai";
 import type { MemoryStore } from "../store/memory-store.js";
 import type { DatabaseManager } from "../store/db.js";
@@ -231,6 +231,16 @@ async function reconcileStoreScope(
 	}
 }
 
+type MemoryAction = "add" | "replace" | "remove";
+
+type MemoryToolParams = {
+	target: "memory" | "user" | "project" | "failure";
+	content?: string;
+	old_text?: string;
+	category?: MemoryCategory;
+	failure_reason?: string;
+};
+
 export function registerMemoryTool(
 	pi: ExtensionAPI,
 	store: MemoryStore,
@@ -265,248 +275,249 @@ export function registerMemoryTool(
 	attachMutationObserver(store);
 	configureProjectStore(resolveProjectStore(projectStore));
 
-	pi.registerTool({
-		name: "memory",
-		label: "Memory",
-		description: MEMORY_TOOL_DESCRIPTION,
-		renderResult: createSharedToolResultRenderer(memoryResultView),
-		promptSnippet:
-			"Save or manage persistent memory that survives across sessions",
-		promptGuidelines: [
-			"Use the memory tool proactively when the user corrects you, shares a preference, or reveals personal details worth remembering.",
-			"Use the memory tool when you discover environment facts, project conventions, or reusable patterns useful in future sessions.",
-			"Do NOT use memory for temporary task state, TODO items, or session progress — only for durable, cross-session facts.",
-			"Use target='failure' with category to save what didn't work (failures, corrections, insights).",
-		],
-		parameters: Type.Object({
-			action: StringEnum(["add", "replace", "remove"] as const),
-			target: StringEnum(["memory", "user", "project", "failure"] as const),
-			content: Type.Optional(
-				Type.String({ description: "Entry content for add/replace" }),
-			),
-			old_text: Type.Optional(
-				Type.String({
-					description: "Substring identifying entry for replace/remove",
-				}),
-			),
-			category: Type.Optional(
-				StringEnum(
-					[
-						"failure",
-						"correction",
-						"insight",
-						"preference",
-						"convention",
-						"tool-quirk",
-					] as const,
+	if (typeof pi.on === "function") {
+		pi.on("tool_result", (event) => {
+			if (!event.toolName.startsWith("memory_")) return;
+			const details = event.details as { success?: unknown } | undefined;
+			if (details?.success === false) return { isError: true };
+		});
+	}
+
+	const executeAction = async (
+		action: MemoryAction,
+		params: MemoryToolParams,
+		signal?: AbortSignal,
+	) => {
+		const { target: rawTarget, content, old_text, category, failure_reason } =
+			params;
+		const target = rawTarget === "project" ? "memory" : rawTarget;
+		const activeProjectStore = resolveProjectStore(projectStore);
+		const activeProjectName = resolveProjectName(projectName);
+		const activeStore = rawTarget === "project" ? activeProjectStore : store;
+
+		if (rawTarget === "project" && !activeProjectStore) {
+			return {
+				content: [
 					{
-						description: "Category for failure memories",
+						type: "text" as const,
+						text: JSON.stringify({
+							success: false,
+							error: "Project memory is not available (no project detected).",
+						}),
 					},
-				),
-			),
+				],
+				details: {
+					success: false,
+					error: "Project memory is not available (no project detected).",
+				},
+			};
+		}
+
+		const store_ = activeStore!;
+		attachMutationObserver(store_);
+		let result: MemoryResult;
+		let syncWarning: string | null = null;
+		const syncHandled = reconciledStores.has(store_);
+
+		switch (action) {
+			case "add": {
+				if (!content) {
+					throw new Error("Content is required for 'add' action.");
+				}
+				if (rawTarget === "failure") {
+					const memoryCategory = category ?? "failure";
+					result = await store_.addFailure(content, {
+						category: memoryCategory,
+						failureReason: failure_reason,
+					});
+					if (result.success && !syncHandled) {
+						syncWarning = await syncAddToSqlite(
+							rawTarget,
+							content,
+							memoryCategory,
+							failure_reason,
+							dbManager,
+							activeProjectName,
+						);
+					}
+				} else {
+					result = await store_.add(target, content, signal);
+					if (result.success && !syncHandled) {
+						await syncEvictionsFromSqlite(
+							rawTarget,
+							result.evicted_entries,
+							dbManager,
+							activeProjectName,
+						);
+						syncWarning = await syncAddToSqlite(
+							rawTarget,
+							content,
+							undefined,
+							undefined,
+							dbManager,
+							activeProjectName,
+						);
+					}
+				}
+				break;
+			}
+			case "replace": {
+				if (!old_text) {
+					throw new Error("old_text is required for 'replace' action.");
+				}
+				if (!content) {
+					throw new Error("content is required for 'replace' action.");
+				}
+				result = await store_.replace(target, old_text, content);
+				if (result.success && !syncHandled) {
+					syncWarning = await syncReplaceToSqlite(
+						rawTarget,
+						old_text,
+						content,
+						dbManager,
+						activeProjectName,
+					);
+				}
+				break;
+			}
+			case "remove": {
+				if (!old_text) {
+					throw new Error("old_text is required for 'remove' action.");
+				}
+				result = await store_.remove(target, old_text);
+				if (result.success && !syncHandled) {
+					syncWarning = await syncRemoveFromSqlite(
+						rawTarget,
+						old_text,
+						dbManager,
+						activeProjectName,
+					);
+				}
+				break;
+			}
+		}
+
+		if (
+			result.success &&
+			!syncHandled &&
+			typeof store_.getRawEntriesForSync === "function"
+		) {
+			const reconciliationWarning = await reconcileStoreScope(
+				store_.getRawEntriesForSync(target),
+				rawTarget,
+				dbManager,
+				activeProjectName,
+			);
+			if (reconciliationWarning !== undefined)
+				syncWarning = reconciliationWarning;
+		}
+
+		if (syncWarning && result.success) result = appendSyncWarning(result, syncWarning);
+		if (rawTarget === "project" && result.success) {
+			result = { ...result, target: "project" };
+		}
+
+		return {
+			content: [
+				{ type: "text" as const, text: formatMemoryToolText(result) },
+			],
+			details: result,
+		};
+	};
+
+	const commonDescription = `${MEMORY_TOOL_DESCRIPTION}
+
+This action-specific tool accepts only the parameters listed in its schema.`;
+
+	const registerActionTool = (
+		action: MemoryAction,
+		name: string,
+		label: string,
+		description: string,
+		parameters: TSchema,
+	) => {
+		pi.registerTool({
+			name,
+			label,
+			description,
+			renderResult: createSharedToolResultRenderer(memoryResultView),
+			promptSnippet: `${label}: persistent memory that survives across sessions`,
+			promptGuidelines: [
+				"Use this tool proactively when the user corrects you, shares a preference, or reveals durable environment or project facts.",
+				"Do not use memory tools for temporary task state, TODO items, or session progress.",
+			],
+			parameters,
+			async execute(_toolCallId, params, signal) {
+				return executeAction(action, params as MemoryToolParams, signal);
+			},
+		});
+	};
+
+	const target = StringEnum(
+		["memory", "user", "project", "failure"] as const,
+		{
+			description:
+				"Memory scope. Use failure for failures, corrections, insights, and tool quirks.",
+		},
+	);
+	const category = StringEnum(
+		[
+			"failure",
+			"correction",
+			"insight",
+			"preference",
+			"convention",
+			"tool-quirk",
+		] as const,
+		{
+			description: "Category for failure memories.",
+		},
+	);
+
+	registerActionTool(
+		"add",
+		"memory_add",
+		"Memory Add",
+		`${commonDescription}
+
+Add one durable entry. The target and content fields are required.`,
+		Type.Object({
+			target,
+			content: Type.String({ description: "Entry content to save." }),
+			category: Type.Optional(category),
 			failure_reason: Type.Optional(
-				Type.String({ description: "Why it failed (for failure category)" }),
+				Type.String({ description: "Why a failure occurred." }),
 			),
 		}),
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const {
-				action,
-				target: rawTarget,
-				content,
-				old_text,
-				category,
-				failure_reason,
-			} = params;
+	);
+	registerActionTool(
+		"replace",
+		"memory_replace",
+		"Memory Replace",
+		`${commonDescription}
 
-			// Route 'project' to projectStore using the normal MEMORY.md target.
-			const target =
-				rawTarget === "project"
-					? "memory"
-					: (rawTarget as "memory" | "user" | "failure");
-			const activeProjectStore = resolveProjectStore(projectStore);
-			const activeProjectName = resolveProjectName(projectName);
-			const activeStore = rawTarget === "project" ? activeProjectStore : store;
+Replace one existing entry. The target, old_text, and content fields are required.`,
+		Type.Object({
+			target,
+			old_text: Type.String({
+				description: "Substring identifying the entry to replace.",
+			}),
+			content: Type.String({ description: "Replacement entry content." }),
+		}),
+	);
+	registerActionTool(
+		"remove",
+		"memory_remove",
+		"Memory Remove",
+		`${commonDescription}
 
-			if (rawTarget === "project" && !activeProjectStore) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify({
-								success: false,
-								error: "Project memory is not available (no project detected).",
-							}),
-						},
-					],
-					details: {},
-				};
-			}
-
-			// After the guard above, activeStore is guaranteed non-null when rawTarget === 'project'
-			const store_ = activeStore!;
-			attachMutationObserver(store_);
-
-			let result: MemoryResult;
-			let syncWarning: string | null = null;
-			const syncHandled = reconciledStores.has(store_);
-			switch (action) {
-				case "add":
-					if (!content) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										success: false,
-										error: "Content is required for 'add' action.",
-									}),
-								},
-							],
-							details: {},
-						};
-					}
-					// Handle failure target with category
-					if (rawTarget === "failure") {
-						const memoryCategory = (category || "failure") as MemoryCategory;
-						result = await store_.addFailure(content, {
-							category: memoryCategory,
-							failureReason: failure_reason,
-						});
-						if (result.success && !syncHandled) {
-							syncWarning = await syncAddToSqlite(
-								rawTarget,
-								content,
-								memoryCategory,
-								failure_reason,
-								dbManager,
-								activeProjectName,
-							);
-						}
-					} else {
-						result = await store_.add(target, content, signal);
-						if (result.success && !syncHandled) {
-							await syncEvictionsFromSqlite(
-								rawTarget,
-								result.evicted_entries,
-								dbManager,
-								activeProjectName,
-							);
-							syncWarning = await syncAddToSqlite(
-								rawTarget,
-								content,
-								undefined,
-								undefined,
-								dbManager,
-								activeProjectName,
-							);
-						}
-					}
-					break;
-
-				case "replace":
-					if (!old_text) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										success: false,
-										error: "old_text is required for 'replace' action.",
-									}),
-								},
-							],
-							details: {},
-						};
-					}
-					if (!content) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										success: false,
-										error: "content is required for 'replace' action.",
-									}),
-								},
-							],
-							details: {},
-						};
-					}
-					result = await store_.replace(target, old_text, content);
-					if (result.success && !syncHandled)
-						syncWarning = await syncReplaceToSqlite(
-							rawTarget,
-							old_text,
-							content,
-							dbManager,
-							activeProjectName,
-						);
-					break;
-
-				case "remove":
-					if (!old_text) {
-						return {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										success: false,
-										error: "old_text is required for 'remove' action.",
-									}),
-								},
-							],
-							details: {},
-						};
-					}
-					result = await store_.remove(target, old_text);
-					if (result.success && !syncHandled)
-						syncWarning = await syncRemoveFromSqlite(
-							rawTarget,
-							old_text,
-							dbManager,
-							activeProjectName,
-						);
-					break;
-
-				default:
-					result = {
-						success: false,
-						error: `Unknown action '${action}'. Use: add, replace, remove`,
-					};
-			}
-
-			if (
-				result.success &&
-				!syncHandled &&
-				typeof store_.getRawEntriesForSync === "function"
-			) {
-				const reconciliationWarning = await reconcileStoreScope(
-					store_.getRawEntriesForSync(target),
-					rawTarget,
-					dbManager,
-					activeProjectName,
-				);
-				if (reconciliationWarning !== undefined)
-					syncWarning = reconciliationWarning;
-			}
-
-			if (syncWarning && result.success) {
-				result = appendSyncWarning(result, syncWarning);
-			}
-
-			// Tag project results so the caller knows the scope
-			if (rawTarget === "project" && result.success) {
-				result = {
-					...result,
-					target: "project",
-				};
-			}
-
-			return {
-				content: [{ type: "text", text: formatMemoryToolText(result) }],
-				details: result,
-			};
-		},
-	});
+Remove one existing entry. The target and old_text fields are required.`,
+		Type.Object({
+			target,
+			old_text: Type.String({
+				description: "Substring identifying the entry to remove.",
+			}),
+		}),
+	);
 	return configureProjectStore;
 }

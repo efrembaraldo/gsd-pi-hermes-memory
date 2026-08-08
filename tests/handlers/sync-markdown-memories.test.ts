@@ -35,10 +35,10 @@ describe('memory sqlite sync + markdown backfill', () => {
   });
 
   it('memory tool writes are immediately searchable in SQLite', async () => {
-    let capturedTool: any;
+    const capturedTools: Record<string, any> = {};
     const mockPi = {
       registerTool: (def: any) => {
-        capturedTool = def;
+        capturedTools[def.name] = def;
       },
     } as unknown as ExtensionAPI;
 
@@ -55,9 +55,9 @@ describe('memory sqlite sync + markdown backfill', () => {
 
     registerMemoryTool(mockPi, mockStore, null, dbManager);
 
-    await capturedTool.execute(
+    await capturedTools.memory_add.execute(
       'tc-1',
-      { action: 'add', target: 'memory', content: 'sync token 2026-05-09' },
+      { target: 'memory', content: 'sync token 2026-05-09' },
       undefined,
       undefined,
       undefined,
