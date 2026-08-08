@@ -16,7 +16,7 @@ describe("session project memory rebinding", () => {
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-agent-"));
     const launchDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-launch-"));
     const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-project-rebind-target-"));
-    const previousAgentRoot = process.env.PI_CODING_AGENT_DIR;
+    const previousAgentRoot = process.env.GSD_CODING_AGENT_DIR;
     const previousCwd = process.cwd();
     try {
       await fs.writeFile(
@@ -42,9 +42,9 @@ describe("session project memory rebinding", () => {
         "active-session memory",
       );
 
-      process.env.PI_CODING_AGENT_DIR = agentRoot;
+      process.env.GSD_CODING_AGENT_DIR = agentRoot;
       process.chdir(launchDir);
-      // Import after setting PI_CODING_AGENT_DIR so AGENT_ROOT is test-local.
+      // Import after setting GSD_CODING_AGENT_DIR so AGENT_ROOT is test-local.
       const { default: registerExtension } = await import("../src/index.js");
       const mockPi: MockPi = {
         handlers: {},
@@ -74,8 +74,8 @@ describe("session project memory rebinding", () => {
       assert.doesNotMatch(result.systemPrompt, /launch-directory memory/);
     } finally {
       process.chdir(previousCwd);
-      if (previousAgentRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentRoot;
+      if (previousAgentRoot === undefined) delete process.env.GSD_CODING_AGENT_DIR;
+      else process.env.GSD_CODING_AGENT_DIR = previousAgentRoot;
       await fs.rm(agentRoot, { recursive: true, force: true });
       await fs.rm(launchDir, { recursive: true, force: true });
       await fs.rm(targetDir, { recursive: true, force: true });

@@ -26,6 +26,8 @@ import {
 	type ProjectStoreRef,
 } from "../project-context.js";
 import type { MemoryCategory, MemoryResult } from "../types.js";
+import { createSharedToolResultRenderer } from "./shared-output-view.js";
+import { memoryResultView } from "./tool-result-views.js";
 
 function appendSyncWarning(
 	result: MemoryResult,
@@ -267,6 +269,7 @@ export function registerMemoryTool(
 		name: "memory",
 		label: "Memory",
 		description: MEMORY_TOOL_DESCRIPTION,
+		renderResult: createSharedToolResultRenderer(memoryResultView),
 		promptSnippet:
 			"Save or manage persistent memory that survives across sessions",
 		promptGuidelines: [

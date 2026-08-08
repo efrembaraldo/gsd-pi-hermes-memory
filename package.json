@@ -1,7 +1,7 @@
 {
-  "name": "gsd-pi-hermes-memory",
-  "version": "0.9.3",
-  "description": "🧠 Persistent memory + 🔍 session search + 🛡️ secret scanning for Pi. Token-aware policy-only memory by default, SQLite FTS5 search, auto-consolidation, procedural skills. 732 tests. Ported from Hermes agent.",
+  "name": "@efrembaraldo/gsd-pi-hermes-memory",
+  "version": "0.0.1",
+  "description": "🧠 Persistent memory + 🔍 session search + 🛡️ secret scanning for GSD Pi. Token-aware policy-only memory by default, SQLite FTS5 search, auto-consolidation, procedural skills. 732 tests. Ported from Hermes agent. Fork of chandra447/pi-hermes-memory",
   "type": "module",
   "main": "src/index.ts",
   "files": [
@@ -70,7 +70,9 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "better-sqlite3": "^12.9.0"
+    "@earendil-works/pi-tui": "^0.80.2",
+    "better-sqlite3": "^12.9.0",
+    "strip-ansi": "7.2.0"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -99,7 +101,6 @@
     "minimatch": "^10.0.0",
     "proper-lockfile": "^4.1.0",
     "sql.js": "^1.14.0",
-    "strip-ansi": "^7.1.0",
     "undici": "^7.0.0",
     "yaml": "^2.6.0",
     "@opengsd/contracts": "^1.12.0"
