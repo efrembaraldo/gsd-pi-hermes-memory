@@ -13,7 +13,6 @@
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true,
-    "baseUrl": ".",
     "paths": {
       "@gsd/pi-coding-agent": ["./vendor/@gsd/pi-coding-agent"],
       "@gsd/pi-coding-agent/*": ["./vendor/@gsd/pi-coding-agent/dist/*"],
