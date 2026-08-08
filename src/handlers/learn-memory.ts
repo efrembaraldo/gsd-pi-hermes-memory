@@ -13,7 +13,7 @@ export function registerLearnMemoryCommand(pi: ExtensionAPI): void {
 			"Learn how to use the gsd-pi-hermes-memory extension effectively",
 		handler: async (_args, ctx: ExtensionCommandContext) => {
 			// Show main menu first
-			const section = await ctx.ui.select(
+			const rawSection = await ctx.ui.select(
 				"GSD Pi Hermes Memory Guide",
 				[
 					"📦 What Gets Saved",
@@ -26,6 +26,12 @@ export function registerLearnMemoryCommand(pi: ExtensionAPI): void {
 				],
 				{},
 			);
+
+			// ctx.ui.select returns `string | string[]`; flatten to the first entry
+			// so the section.startsWith(...) checks below stay simple.
+			const section = Array.isArray(rawSection)
+				? rawSection[0]
+				: rawSection;
 
 			if (!section) return;
 

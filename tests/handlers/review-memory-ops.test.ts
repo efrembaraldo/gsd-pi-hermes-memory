@@ -15,6 +15,24 @@ import {
 import { DatabaseManager } from "../../src/store/db.js";
 import { getMemories, reconcileMarkdownMemoryScope } from "../../src/store/sqlite-memory-store.js";
 
+function makeMemoryConfig(extra: Partial<Parameters<typeof MemoryStore>[0]> = {}): Parameters<typeof MemoryStore>[0] {
+  return {
+    memoryMode: "policy-only",
+    memoryCharLimit: 5000,
+    userCharLimit: 5000,
+    projectCharLimit: 5000,
+    nudgeInterval: 10,
+    reviewEnabled: false,
+    flushOnCompact: false,
+    flushOnShutdown: false,
+    flushMinTurns: 6,
+    autoConsolidate: true,
+    correctionDetection: false,
+    ...extra,
+  };
+}
+
+
 function mockModel(reasoning: boolean): Model<Api> {
   return {
     id: "test-model",
@@ -25,14 +43,13 @@ function mockModel(reasoning: boolean): Model<Api> {
 }
 
 describe("buildDirectReviewCompletionOptions", () => {
-  it("forwards auth env and preserves reasoning level", () => {
+  it("forwards auth headers and preserves reasoning level", () => {
     const signal = new AbortController().signal;
     const options = buildDirectReviewCompletionOptions(
       mockModel(true),
       {
         apiKey: "sk-test",
         headers: { "X-Test": "1" },
-        env: { CUSTOM_BASE_URL: "https://proxy.example" },
       },
       "minimal",
       signal,
@@ -40,7 +57,6 @@ describe("buildDirectReviewCompletionOptions", () => {
 
     assert.strictEqual(options.apiKey, "sk-test");
     assert.deepStrictEqual(options.headers, { "X-Test": "1" });
-    assert.deepStrictEqual(options.env, { CUSTOM_BASE_URL: "https://proxy.example" });
     assert.strictEqual(options.reasoning, "minimal");
     assert.strictEqual(options.signal, signal);
   });
@@ -254,10 +270,18 @@ describe("applyReviewOperations", () => {
 
   it("applies add operations to memory store", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
 
@@ -272,10 +296,18 @@ describe("applyReviewOperations", () => {
 
   it("skips project operations when project store is unavailable", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
 
@@ -289,10 +321,18 @@ describe("applyReviewOperations", () => {
 
   it("rolls back the entire atomic plan when a later operation fails", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
     await store.add("memory", "keep this original entry");
@@ -321,10 +361,18 @@ describe("applyReviewOperations", () => {
 
   it("rejects mixed and unexpected atomic targets before mutation", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
     await store.add("memory", "global source entry");
@@ -366,10 +414,18 @@ describe("applyReviewOperations", () => {
 
   it("rejects an empty atomic plan and an unavailable atomic project store", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
 
@@ -407,16 +463,32 @@ describe("applyReviewOperations", () => {
     const globalDir = path.join(tmpDir, "global");
     const projectDir = path.join(tmpDir, "project");
     const store = new MemoryStore({
-      memoryDir: globalDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: globalDir,
     });
     const projectStore = new MemoryStore({
-      memoryDir: projectDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: projectDir,
     });
     await Promise.all([store.loadFromDisk(), projectStore.loadFromDisk()]);
     await store.add("memory", "global source stays intact");
@@ -446,11 +518,18 @@ describe("applyReviewOperations", () => {
 
   it("defaults failure formatting and preserves project attribution in atomic plans", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
-      failureCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
     await store.addFailure("obsolete failure detail that is intentionally long", {
@@ -484,11 +563,18 @@ describe("applyReviewOperations", () => {
 
   it("attributes ordinary non-atomic failures to the current project", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
-      failureCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
     const dbManager = new DatabaseManager(path.join(tmpDir, "db"));
@@ -528,10 +614,18 @@ describe("applyReviewOperations", () => {
 
   it("returns an actionable direct-completion error without partial atomic changes", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
     await store.add("memory", "keep this direct-review source");
@@ -579,10 +673,18 @@ describe("applyReviewOperations", () => {
 
   it("uses the in-lock mutation observer as the sole SQLite reconciliation path", async () => {
     const store = new MemoryStore({
-      memoryDir: tmpDir,
+      memoryMode: "policy-only",
       memoryCharLimit: 5000,
       userCharLimit: 5000,
+      projectCharLimit: 5000,
+      nudgeInterval: 10,
+      reviewEnabled: false,
+      flushOnCompact: false,
+      flushOnShutdown: false,
+      flushMinTurns: 6,
       autoConsolidate: true,
+      correctionDetection: false,
+      memoryDir: tmpDir,
     });
     await store.loadFromDisk();
 

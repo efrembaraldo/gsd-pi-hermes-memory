@@ -247,7 +247,7 @@ export function registerMemoryTool(
 	projectStore: ProjectStoreRef,
 	dbManager: DatabaseManager | null = null,
 	projectName: ProjectNameRef = null,
-): (candidate: MemoryStore | null) => void {
+): (candidate: ProjectStoreRef) => void {
 	const reconciledStores = new WeakSet<MemoryStore>();
 	const attachMutationObserver = (
 		candidate: MemoryStore | null,
@@ -269,8 +269,8 @@ export function registerMemoryTool(
 		);
 		reconciledStores.add(candidate);
 	};
-	const configureProjectStore = (candidate: MemoryStore | null): void => {
-		attachMutationObserver(candidate, true);
+	const configureProjectStore = (candidate: ProjectStoreRef): void => {
+		attachMutationObserver(resolveProjectStore(candidate), true);
 	};
 	attachMutationObserver(store);
 	configureProjectStore(resolveProjectStore(projectStore));

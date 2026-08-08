@@ -3,9 +3,9 @@
  */
 
 import type { Api, Model } from "@gsd/pi-ai";
-import { completeSimple, type Message, type SimpleStreamOptions } from "@gsd/pi-ai/compat";
+import { completeSimple, type Message, type SimpleStreamOptions } from "@gsd/pi-ai";
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
-import { MemoryStore } from "../store/memory-store.js";
+import type { MemoryStore } from "../store/memory-store.js";
 import type { DatabaseManager } from "../store/db.js";
 import type { MemoryCategory, MemoryConfig, MemoryResult, ThinkingLevel } from "../types.js";
 
@@ -102,7 +102,6 @@ export function buildDirectReviewCompletionOptions(
   const options: SimpleStreamOptions = {
     apiKey: auth.apiKey,
     headers: auth.headers,
-    env: auth.env,
     signal,
   };
   if (model.reasoning && thinking && thinking !== "off") {
@@ -436,7 +435,7 @@ export async function runDirectMemoryCompletion(
       error: auth.ok ? `No API key for ${model.provider}` : auth.error,
     };
   }
-  let requestAuth = { apiKey: auth.apiKey, headers: auth.headers, env: auth.env };
+  let requestAuth = { apiKey: auth.apiKey, headers: auth.headers };
 
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? 120000;
@@ -473,7 +472,7 @@ export async function runDirectMemoryCompletion(
       const rotated = await resolveFreshRequestAuth(ctx.modelRegistry, model);
       if (!rotated.ok || !rotated.apiKey || rotated.apiKey === requestAuth.apiKey) throw err;
 
-      requestAuth = { apiKey: rotated.apiKey, headers: rotated.headers, env: rotated.env };
+      requestAuth = { apiKey: rotated.apiKey, headers: rotated.headers };
       response = await complete(
         model,
         request,

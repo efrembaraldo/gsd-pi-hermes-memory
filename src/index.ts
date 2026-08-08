@@ -25,6 +25,8 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import type { ProjectStoreRef } from "./project-context.js";
+import { resolveProjectStore } from "./project-context.js";
 import { MemoryStore } from "./store/memory-store.js";
 import { SkillStore } from "./store/skill-store.js";
 import { DatabaseManager } from "./store/db.js";
@@ -189,8 +191,8 @@ export default function (pi: ExtensionAPI) {
 	let projectStore = createProjectStore(project);
 	const projectStoreRef = () => projectStore;
 	const projectNameRef = () => projectName;
-	let configureProjectStore: (candidate: MemoryStore | null) => void = () => {};
-	let configureMemoryToolProjectStore: (candidate: MemoryStore | null) => void =
+	let configureProjectStore: (candidate: ProjectStoreRef) => void = () => {};
+	let configureMemoryToolProjectStore: (candidate: ProjectStoreRef) => void =
 		() => {};
 	// Never written by review, consolidation or the correction detector — see
 	// store/standing-instructions.ts for why provenance has to be structural.
@@ -343,11 +345,12 @@ export default function (pi: ExtensionAPI) {
 		runAutoConsolidation(target, store, target, signal),
 	);
 	configureProjectStore = (candidate) => {
-		if (!candidate) return;
-		candidate.setConsolidator((target, signal) =>
+		const resolved = resolveProjectStore(candidate);
+		if (!resolved) return;
+		resolved.setConsolidator((target, signal) =>
 			runAutoConsolidation(
 				target,
-				candidate,
+				resolved,
 				target === "memory" ? "project" : target,
 				signal,
 			),
