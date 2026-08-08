@@ -323,7 +323,7 @@ v0.4 also gains the `MemoryBackend` interface from original v0.4, making it "Str
 After each epic:
 1. `npm run check` — zero type errors
 2. `npm test` — all tests pass (per-file runner)
-3. Manual test: `pi -e ./src/index.ts` — verify the feature in a live session
+3. Manual test: `gsd -e ./src/index.ts` — verify the feature in a live session
 
 Final:
 4. Full regression: all existing tests + new tests pass

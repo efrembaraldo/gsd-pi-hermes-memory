@@ -41,7 +41,7 @@ subprocess completes asynchronously.
 
 ### Auto-review failures on Windows no longer show errors (#9)
 
-On Windows git-bash, `pi exec` subprocesses could exit with code 1 producing
+On Windows git-bash, `gsd exec` subprocesses could exit with code 1 producing
 `[hermes] auto-review failed (exit=1): unknown error` messages every few turns. Fixed by
 making auto-review truly best-effort — non-zero exit codes and spawn errors are silently
 ignored.

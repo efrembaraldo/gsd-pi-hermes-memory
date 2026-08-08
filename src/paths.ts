@@ -5,8 +5,8 @@ import { DEFAULT_PROJECTS_MEMORY_DIR } from "./constants.js";
 export const AGENT_ROOT = resolveAgentRoot();
 
 export function resolveAgentRoot(env: Record<string, string | undefined> = process.env): string {
-  const configured = env.PI_CODING_AGENT_DIR?.trim();
-  return configured ? path.resolve(expandHome(configured)) : path.join(os.homedir(), ".pi", "agent");
+  const configured = env.GSD_CODING_AGENT_DIR?.trim();
+  return configured ? path.resolve(expandHome(configured)) : path.join(os.homedir(), ".gsd", "agent");
 }
 
 export function expandHome(input: string): string {

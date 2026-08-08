@@ -283,7 +283,7 @@ Skill index is captured at `session_start` and injected at `before_agent_start`.
 After each epic:
 1. `npm run check` — zero type errors
 2. `npm test` — all tests pass
-3. Manual test: `pi -e ./src/index.ts` — verify the feature works in a live session
+3. Manual test: `gsd -e ./src/index.ts` — verify the feature works in a live session
 
 Final:
 4. Full regression: all 119 existing tests + new tests pass

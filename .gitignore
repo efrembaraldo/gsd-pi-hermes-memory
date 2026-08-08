@@ -102,3 +102,4 @@ target/
 coverage/
 .cache/
 tmp/
+.gsd-graph/

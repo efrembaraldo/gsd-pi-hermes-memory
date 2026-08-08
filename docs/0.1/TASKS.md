@@ -25,7 +25,7 @@ _Done when: repo is on GitHub, TypeScript compiles clean, extension loads in GSD
 - [x] `src/index.ts` — Extension entry point wiring everything — `efddcc4`
 - [x] GitHub repo created and initial commit pushed — `efddcc4`
 - [x] `npm install` + `npm run check` passes with zero errors
-- [x] Extension loads in GSD Pi via `pi -e ./src/index.ts` without runtime errors — verified
+- [x] Extension loads in GSD Pi via `gsd -e ./src/index.ts` without runtime errors — verified
 
 ---
 
@@ -80,7 +80,7 @@ _Done when: memory snapshot appears in system prompt at session start and does N
 
 ## Epic 5: Background Learning Loop
 
-_Done when: after N turns, a background pi process reviews the conversation and saves notable facts automatically._
+_Done when: after N turns, a background gsd process reviews the conversation and saves notable facts automatically._
 
 - [x] Turn counter increments on each `turn_end` event — `164eef9`
 - [x] User turn counter increments only on user messages (not assistant/tool) — `164eef9`
@@ -160,7 +160,7 @@ _Done when: all core paths have automated tests and the extension passes a manua
 ### Integration Tests
 
 
-- [x] Extension loads in GSD Pi via `pi -e ./src/index.ts` — no errors — verified
+- [x] Extension loads in GSD Pi via `gsd -e ./src/index.ts` — no errors — verified
 - [x] `memory` tool callable by LLM (manual verification — no API key) — manual verification required
 - [x] System prompt contains (manual verification — needs GSD Pi runtime) memory block after `session_start` — manual verification required
 - [x] `/memory-insights` (manual verification — needs GSD Pi runtime) command runs and shows output — manual verification required
@@ -206,7 +206,7 @@ _Done when: extension is installable via `gsd install` and has user-facing docs.
 **Automated test coverage: 119 tests, 0 failures, 0 type e
 rrors.**
 
-**Manual verification required:** Run `pi -e ./src/index.ts` or `gsd install github:efrembaraldo/gsd-pi-hermes-memory`, then:
+**Manual verification required:** Run `gsd -e ./src/index.ts` or `gsd install github:efrembaraldo/gsd-pi-hermes-memory`, then:
 
 1. Have the LLM save a memory and verify it appears in `~/.pi/agent/memory/MEMORY.md`
 2. Start a new session (`/new`) and verify the memory appears in the system prompt

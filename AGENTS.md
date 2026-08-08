@@ -65,13 +65,13 @@ The implementation is ported from the Hermes agent harness. See `PLAN.md` → "H
 npm run check
 
 # Test locally
-pi -e ./src/index.ts
+gsd -e ./src/index.ts
 ```
 
 ## Installation (for users)
 
 ```bash
-gsd install npm:gsd-pi-hermes-memory
+gsd install npm:@efrembaraldo/gsd-pi-hermes-memory
 
 # or from git
 gsd install git:github.com/efrembaraldo/gsd-pi-hermes-memory

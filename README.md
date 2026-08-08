@@ -10,6 +10,8 @@
 
 </div>
 
+> Fork of [chandra447/pi-hermes-memory](https://github.com/chandra447/pi-hermes-memory), reworked for use with [open-gsd/gsd-pi](https://github.com/open-gsd/gsd-pi).
+
 Your GSD Pi agent normally forgets everything when you close a session. **This extension fixes that.**
 
 - 🔍 **Search every conversation** — "what did we discuss about auth?" finds it instantly
@@ -25,7 +27,7 @@ Your GSD Pi agent normally forgets everything when you close a session. **This e
 
 ```bash
 # Install
-gsd install npm:gsd-pi-hermes-memory
+gsd install npm:@efrembaraldo/gsd-pi-hermes-memory
 
 # Index your past sessions (one-time)
 /memory-index-sessions
@@ -107,7 +109,7 @@ npm test
 ## Installation
 
 ```bash
-gsd install npm:gsd-pi-hermes-memory
+gsd install npm:@efrembaraldo/gsd-pi-hermes-memory
 ```
 
 Or install from GitHub:
@@ -119,7 +121,7 @@ gsd install git:github.com/efrembaraldo/gsd-pi-hermes-memory
 Or test locally without installing:
 
 ```bash
-pi -e /path/to/gsd-pi-hermes-memory/src/index.ts
+gsd -e /path/to/gsd-pi-hermes-memory/src/index.ts
 ```
 
 ### Homebrew / Node ABI mismatches
@@ -401,7 +403,7 @@ Both counters reset after each review.
 
 By default, background review, session flush, correction save, and the manual `/memory-consolidate` command use an in-process `completeSimple()` side-channel: a small JSON-only prompt, no child `pi` process, and memory writes applied directly by the extension. This keeps the main session's system prompt, tools, and LLM prefix cache intact, and avoids the subprocess path's argv/`--no-extensions` concerns entirely on the common path.
 
-If direct mode fails (no model, no auth, provider error, unparseable response, or — for consolidation only — a result that didn't actually free any space), it automatically falls back to the legacy `pi -p --no-session` subprocess path. The automatic over-capacity consolidator triggered from `MemoryStore` itself always uses the subprocess path, since it runs without extension-runtime access.
+If direct mode fails (no model, no auth, provider error, unparseable response, or — for consolidation only — a result that didn't actually free any space), it automatically falls back to the legacy `gsd -p --no-session` subprocess path. The automatic over-capacity consolidator triggered from `MemoryStore` itself always uses the subprocess path, since it runs without extension-runtime access.
 
 Set `reviewTransport` in config only when you need to override this:
 
@@ -539,7 +541,7 @@ Create `~/.gsd/agent/hermes-memory-config.json`:
 | `nudgeToolCalls` | `15` | Tool calls between auto-reviews (OR with turns) |
 | `reviewRecentMessages` | `0` | Recent messages included in background review (`0` = all) |
 | `reviewEnabled` | `true` | Enable/disable background learning loop |
-| `reviewTransport` | `direct` | LLM transport for background review, session flush, correction save, and manual consolidation: `direct` uses in-process `completeSimple()` with subprocess fallback; `subprocess` forces legacy `pi -p` only |
+| `reviewTransport` | `direct` | LLM transport for background review, session flush, correction save, and manual consolidation: `direct` uses in-process `completeSimple()` with subprocess fallback; `subprocess` forces legacy `gsd -p` only |
 | `memoryOverflowStrategy` | `auto-consolidate` | Behavior when MEMORY.md, USER.md, failures.md, or project-scoped memory reaches its character limit: `auto-consolidate` runs the existing consolidation flow; `reject` returns an error; `fifo-evict` rotates older entries in file order until the new entry fits |
 | `autoConsolidate` | `true` | Legacy alias for `memoryOverflowStrategy` when `memoryOverflowStrategy` is not set (`true` = `auto-consolidate`, `false` = `reject`) |
 | `consolidationTimeoutMs` | `180000` | Maximum time in milliseconds for a consolidation run (auto and `/memory-consolidate` alike). Configured values are used verbatim; a consolidation pays child-process boot plus a full LLM turn, so values below the default are frequently killed mid-run and log a warning at startup |
@@ -591,7 +593,7 @@ The `sessions.db` SQLite database stores session history and extended memory ent
 ## Known Limitations
 
 - **`§` delimiter**: Memory entries are separated by `§` (section sign). If an entry naturally contains `§`, it will be split incorrectly on reload. This is rare in English text but possible. [Hermes uses the same delimiter.]
-- **Background review cost**: Each review cycle costs one full LLM API call via a child `pi -p` process. Correction detection and explicit skill saves can add additional calls when the agent decides they are worth it.
+- **Background review cost**: Each review cycle costs one full LLM API call via a child `gsd -p` process. Correction detection and explicit skill saves can add additional calls when the agent decides they are worth it.
 - **Session search requires indexing**: Past sessions must be indexed before they're searchable. Run `/memory-index-sessions` to bulk-import, or let the extension auto-index on session shutdown.
 - **Older Markdown memories may need backfill**: If you saved memories before the SQLite mirror existed or search looks stale, run `/memory-sync-markdown`.
 - **Core memory limits still apply**: SQLite search mirroring does not bypass the 5,000-char core Markdown limit. If consolidation cannot free space, the write fails instead of becoming SQLite-only memory invisibly.

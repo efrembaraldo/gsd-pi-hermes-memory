@@ -33,7 +33,7 @@ sequenceDiagram
     Note over Pi,SQL: ── User Correction ──
     User->>Pi: "No, don't use npm — use pnpm"
     Extension->>Extension: isCorrection() = true
-    Extension->>Pi: pi.exec("pi -p", correctionPrompt)
+    Extension->>Pi: pi.exec("gsd -p", correctionPrompt)
     Extension->>MD: Save [correction] failure memory
     Extension->>SQL: best-effort correction sync
 
@@ -47,10 +47,10 @@ sequenceDiagram
 
     Note over Pi,SQL: ── Background Learning ──
     Pi->>Extension: turn_end (10 turns or 15 tool calls)
-    Extension->>Pi: pi.exec("pi -p", reviewPrompt)
+    Extension->>Pi: pi.exec("gsd -p", reviewPrompt)
     Note right of Pi: Review can save memories/failures/skills
 
     Note over Pi,SQL: ── Session End ──
     Pi->>Extension: session_shutdown event
-    Extension->>Pi: pi.exec("pi -p", flushPrompt)
+    Extension->>Pi: pi.exec("gsd -p", flushPrompt)
     Note right of Pi: final chance to save durable learnings
