@@ -17,10 +17,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@gsd/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { MemoryStore } from "../store/memory-store.js";
 import type { DatabaseManager } from "../store/db.js";
 import {

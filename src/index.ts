@@ -128,8 +128,8 @@ export default function (pi: ExtensionAPI) {
 	let persistenceInitialized = false;
 
 	const store = new MemoryStore({ ...config, memoryDir: globalDir });
-	const project = detectProject(config.projectsMemoryDir);
-	const projectName = project.name ?? "";
+	let project = detectProject(config.projectsMemoryDir);
+	let projectName = project.name ?? "";
 	const skillStore = new SkillStore({
 		globalSkillsDir: path.join(globalDir, "skills"),
 		piGlobalSkillsDir: path.join(agentRoot, "skills"),
@@ -175,16 +175,23 @@ export default function (pi: ExtensionAPI) {
 	migrateLegacyProjectMemoryDirs(agentRoot, config.projectsMemoryDir);
 	// Detect project from cwd using shared helper
 	// Project-scoped store: ~/.gsd/agent/<projectsMemoryDir>/<project_name>/
-	const projectConfig = project.memoryDir
-		? {
-				...config,
-				memoryCharLimit: config.projectCharLimit,
-				memoryDir: project.memoryDir,
-			}
-		: { ...config, memoryDir: undefined };
-	const projectStore = project.memoryDir
-		? new MemoryStore(projectConfig)
-		: null;
+	const createProjectStore = (
+		projectInfo: ReturnType<typeof detectProject>,
+	): MemoryStore | null => {
+		if (!projectInfo.memoryDir) return null;
+		return new MemoryStore({
+			...config,
+			memoryCharLimit: config.projectCharLimit,
+			memoryDir: projectInfo.memoryDir,
+		});
+	};
+	let projectMemoryDir = project.memoryDir ?? null;
+	let projectStore = createProjectStore(project);
+	const projectStoreRef = () => projectStore;
+	const projectNameRef = () => projectName;
+	let configureProjectStore: (candidate: MemoryStore | null) => void = () => {};
+	let configureMemoryToolProjectStore: (candidate: MemoryStore | null) => void =
+		() => {};
 	// Never written by review, consolidation or the correction detector — see
 	// store/standing-instructions.ts for why provenance has to be structural.
 	const standingStore =
@@ -215,6 +222,16 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
+		const nextProject = detectProject(config.projectsMemoryDir, ctx.cwd);
+		const nextProjectMemoryDir = nextProject.memoryDir ?? null;
+		if (nextProjectMemoryDir !== projectMemoryDir) {
+			projectMemoryDir = nextProjectMemoryDir;
+			projectStore = createProjectStore(nextProject);
+			configureProjectStore(projectStore);
+			configureMemoryToolProjectStore(projectStore);
+		}
+		project = nextProject;
+		projectName = nextProject.name ?? "";
 		refreshSkillProjectContext(ctx.cwd);
 		await skillStore.migrateLegacySkills();
 		await skillStore.ensureDiscoveredRoots();
@@ -252,8 +269,8 @@ export default function (pi: ExtensionAPI) {
 		const promptContext = await buildPromptContext(
 			config,
 			store,
-			projectStore,
-			projectName,
+			projectStoreRef(),
+			projectNameRef(),
 			standingStore,
 		);
 
@@ -265,19 +282,32 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// ── 3. Register the memory tool (with project store + SQLite sync) ──
-	registerMemoryTool(pi, store, projectStore, dbManager, projectName);
+	configureMemoryToolProjectStore = registerMemoryTool(
+		pi,
+		store,
+		projectStoreRef,
+		dbManager,
+		projectNameRef,
+	);
 
 	// ── 4. Register the skill tool ──
 	registerSkillTool(pi, skillStore);
 
 	// ── 5. Setup background learning loop (with tool-call-aware nudge) ──
-	setupBackgroundReview(pi, store, projectStore, config, {
+	setupBackgroundReview(pi, store, projectStoreRef, config, {
 		dbManager,
-		projectName: projectName || null,
+		projectName: projectNameRef,
 	});
 
 	// ── 6. Setup session-end flush ──
-	setupSessionFlush(pi, store, projectStore, config, dbManager, projectName);
+	setupSessionFlush(
+		pi,
+		store,
+		projectStoreRef,
+		config,
+		dbManager,
+		projectNameRef,
+	);
 
 	// ── 7. Setup auto-consolidation (inject consolidator into stores) ──
 	// A failed auto-consolidation is otherwise invisible outside the tool result,
@@ -312,22 +342,24 @@ export default function (pi: ExtensionAPI) {
 	store.setConsolidator((target, signal) =>
 		runAutoConsolidation(target, store, target, signal),
 	);
-	if (projectStore) {
-		projectStore.setConsolidator((target, signal) =>
+	configureProjectStore = (candidate) => {
+		if (!candidate) return;
+		candidate.setConsolidator((target, signal) =>
 			runAutoConsolidation(
 				target,
-				projectStore,
+				candidate,
 				target === "memory" ? "project" : target,
 				signal,
 			),
 		);
-	}
+	};
+	configureProjectStore(projectStore);
 	registerConsolidateCommand(
 		pi,
 		store,
 		config.consolidationTimeoutMs,
-		projectStore,
-		projectName,
+		projectStoreRef,
+		projectNameRef,
 		config,
 		dbManager,
 	);
@@ -336,14 +368,14 @@ export default function (pi: ExtensionAPI) {
 	setupCorrectionDetector(
 		pi,
 		store,
-		projectStore,
+		projectStoreRef,
 		config,
 		dbManager,
-		projectName,
+		projectNameRef,
 	);
 
 	// ── 9. Register commands ──
-	registerInsightsCommand(pi, store, projectStore, projectName);
+	registerInsightsCommand(pi, store, projectStoreRef, projectNameRef);
 	registerSkillsCommand(pi, skillStore);
 	registerInterviewCommand(pi, store);
 	registerSwitchProjectCommand(pi, config);
@@ -358,8 +390,8 @@ export default function (pi: ExtensionAPI) {
 	registerPreviewContextCommand(
 		pi,
 		store,
-		projectStore,
-		projectName,
+		projectStoreRef,
+		projectNameRef,
 		config,
 		standingStore,
 	);
