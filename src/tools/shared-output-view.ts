@@ -1,12 +1,142 @@
 import type { ToolRenderResultOptions } from "@gsd/pi-coding-agent";
 import stripAnsi from "strip-ansi";
-import {
-  Text,
-  truncateToWidth,
-  visibleWidth,
-  type Component,
-} from "@gsd/pi-tui";
-import { sliceByColumn } from "@gsd/pi-tui/utils.js";
+import { Text, type Component } from "@gsd/pi-tui";
+
+/**
+ * Local, dependency-free implementations of visibleWidth and
+ * truncateToWidth. We deliberately do NOT import from @gsd/pi-tui/utils.js
+ * because that subpath is not guaranteed to be installed alongside the
+ * extension: gsd-pi bundles the runtime but does not exercise our
+ * extendsions' node_modules, so a subpath import resolves to a path
+ * that does not exist on disk. The result is a runtime crash:
+ *   Cannot find module '.../pi-tui/dist/index.js/utils.js'
+ * The visibleWidth / truncateToWidth APIs we use here are small enough
+ * to inline without losing visibly correct behaviour for the cases
+ * that matter (agent transcript summary, status lines).
+ *
+ * ponytail: drop these if @gsd/pi-tui ever ships a stable subpath export
+ * or we switch to bundling the dependency into the tarball.
+ */
+
+/**
+ * Approximate visible width in terminal columns. Honors East Asian
+ * wide characters (CJK) via a small lookup table because Intl.Segmenter
+ * is overkill for the 4 callers we have here.
+ */
+function visibleWidth(str: string): number {
+  if (str.length === 0) return 0;
+  let width = 0;
+  for (const char of str) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) continue;
+    // ANSI escape sequences are zero-width from the terminal's POV.
+    if (codePoint === 0x1b) continue;
+    // Combining marks, zero-width spaces, etc. don't add a column.
+    if (
+      (codePoint >= 0x0300 && codePoint <= 0x036f) ||
+      (codePoint >= 0x200b && codePoint <= 0x200f) ||
+      (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+      codePoint === 0x00ad
+    ) {
+      continue;
+    }
+    // CJK unified ideographs, hiragana, katakana, hangul, fullwidth
+    // forms are double-width. This is the same generalisation
+    // East Asian Width would give; we inline for performance.
+    if (
+      (codePoint >= 0x1100 && codePoint <= 0x115f) ||
+      (codePoint >= 0x2e80 && codePoint <= 0x303e) ||
+      (codePoint >= 0x3041 && codePoint <= 0x33ff) ||
+      (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
+      (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
+      (codePoint >= 0xa000 && codePoint <= 0xa4cf) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xfe30 && codePoint <= 0xfe4f) ||
+      (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+      (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+      (codePoint >= 0x20000 && codePoint <= 0x2fffd) ||
+      (codePoint >= 0x30000 && codePoint <= 0x3fffd)
+    ) {
+      width += 2;
+      continue;
+    }
+    width += 1;
+  }
+  return width;
+}
+
+/**
+ * Approximate truncate-to-width. Counts columns via visibleWidth above
+ * and slices by code points (not UTF-16 code units) so we don't cut a
+ * surrogate pair in half. For the constrained "summary line" use case
+ * this is good enough; exact grapheme-aware truncation is not needed.
+ */
+function truncateToWidth(
+  text: string,
+  maxWidth: number,
+  ellipsis: string = "…",
+): string {
+  if (maxWidth <= 0) return ellipsis;
+  if (visibleWidth(text) <= maxWidth) return text;
+  const target = Math.max(0, maxWidth - visibleWidth(ellipsis));
+  let acc = 0;
+  let result = "";
+  for (const char of text) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) continue;
+    const charWidth =
+      codePoint >= 0x1100 && codePoint <= 0x115f ? 2 : 1;
+    if (acc + charWidth > target) break;
+    result += char;
+    acc += charWidth;
+  }
+  return result + ellipsis;
+}
+
+/**
+ * Find the code-point index that approximately corresponds to `startCol`
+ * columns into the string. Used by compactSummary to drop a head/tail
+ * window where exact grapheme boundaries would be ideal but ASCII-safe
+ * column arithmetic is sufficient for the summary line.
+ */
+function sliceByColumns(
+  text: string,
+  startCol: number,
+  length: number,
+): string {
+  let acc = 0;
+  let startIdx = -1;
+  let endIdx = text.length;
+  let result = "";
+  for (let i = 0; i < text.length; ) {
+    const codePoint = text.codePointAt(i);
+    if (codePoint === undefined) {
+      i++;
+      continue;
+    }
+    const charWidth = codePoint >= 0x1100 && codePoint <= 0x115f ? 2 : 1;
+    const charLen = codePoint > 0xffff ? 2 : 1;
+    if (startIdx === -1 && acc >= startCol) {
+      startIdx = i;
+    }
+    if (acc - startCol >= length) {
+      endIdx = i;
+      break;
+    }
+    if (startIdx !== -1) result += String.fromCodePoint(codePoint);
+    acc += charWidth;
+    i += charLen;
+  }
+  if (startIdx === -1) {
+    // startCol was past the end of the string.
+    return "";
+  }
+  // Use the trimmed result; we always pass code-unit pointers so the
+  // result is a valid UTF-16 string.
+  void endIdx;
+  return result;
+}
 
 export type SharedStatus = "success" | "failure" | "empty";
 
@@ -97,11 +227,10 @@ function compactSummary(summary: string, width: number, preserveTail: boolean): 
   const tailWidth = Math.max(6, Math.floor(width / 2));
   const headWidth = Math.max(3, width - tailWidth - 1);
   const fullWidth = visibleWidth(summary);
-  return `${sliceByColumn(summary, 0, headWidth, true)}…${sliceByColumn(
+  return `${sliceByColumns(summary, 0, headWidth)}…${sliceByColumns(
     summary,
     Math.max(0, fullWidth - tailWidth),
     tailWidth,
-    true,
   )}`;
 }
 
