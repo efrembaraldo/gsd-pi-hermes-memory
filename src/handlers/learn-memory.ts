@@ -29,9 +29,7 @@ export function registerLearnMemoryCommand(pi: ExtensionAPI): void {
 
 			// ctx.ui.select returns `string | string[]`; flatten to the first entry
 			// so the section.startsWith(...) checks below stay simple.
-			const section = Array.isArray(rawSection)
-				? rawSection[0]
-				: rawSection;
+			const section = Array.isArray(rawSection) ? rawSection[0] : rawSection;
 
 			if (!section) return;
 
