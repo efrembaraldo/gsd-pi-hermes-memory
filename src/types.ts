@@ -71,6 +71,8 @@ export interface MemoryConfig {
 	memoryOverflowStrategy?: MemoryOverflowStrategy;
 	/** Legacy alias for memoryOverflowStrategy. Default: true */
 	autoConsolidate: boolean;
+	/** Prompt the user to migrate from pi-hermes-memory on session_start. Default: true */
+	implicitMigrationEnabled?: boolean;
 	/** Detect user corrections and trigger immediate memory save. Default: true */
 	correctionDetection: boolean;
 	/** Override strong correction regex sources. Missing = defaults; [] = none. */
@@ -119,12 +121,12 @@ export interface MemoryResult {
 }
 
 export interface MemoryMutationOperation {
-  action: "add" | "replace" | "remove";
-  content?: string;
-  oldText?: string;
-  category?: MemoryCategory;
-  failureReason?: string;
-  project?: string;
+	action: "add" | "replace" | "remove";
+	content?: string;
+	oldText?: string;
+	category?: MemoryCategory;
+	failureReason?: string;
+	project?: string;
 }
 
 export interface MemorySnapshot {

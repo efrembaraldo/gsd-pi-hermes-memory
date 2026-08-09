@@ -23,7 +23,6 @@
  */
 
 import * as path from "node:path";
-import * as fs from "node:fs";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import type { ProjectStoreRef } from "./project-context.js";
 import { resolveProjectStore } from "./project-context.js";
@@ -59,6 +58,12 @@ import {
 import { setupCorrectionDetector } from "./handlers/correction-detector.js";
 import { registerSkillsCommand } from "./handlers/skills-command.js";
 import { registerInterviewCommand } from "./handlers/interview.js";
+import {
+	formatMigrationResult,
+	migrateFromPiHermesMemory,
+	registerMigrateFromPiCommand,
+	shouldOfferImplicitMigration,
+} from "./handlers/migrate-from-pi-hermes-memory.js";
 import { registerSwitchProjectCommand } from "./handlers/switch-project.js";
 import { registerIndexSessionsCommand } from "./handlers/index-sessions.js";
 import { registerLearnMemoryCommand } from "./handlers/learn-memory.js";
@@ -128,6 +133,7 @@ export default function (pi: ExtensionAPI) {
 	const shouldMigrateExtensionRoot =
 		!configuredMemoryDir || pointsToLegacyMemoryDir;
 	let persistenceInitialized = false;
+	let implicitMigrationPrompted = false;
 
 	const store = new MemoryStore({ ...config, memoryDir: globalDir });
 	let project = detectProject(config.projectsMemoryDir);
@@ -258,6 +264,46 @@ export default function (pi: ExtensionAPI) {
 					}
 				},
 			});
+
+		// Implicit migration prompt: only on the first session_start in this
+		// process, so we don't badger the user every session.
+		if (
+			!implicitMigrationPrompted &&
+			shouldOfferImplicitMigration(config.implicitMigrationEnabled)
+		) {
+			implicitMigrationPrompted = true;
+			try {
+				const rawChoice = await ctx.ui.select?.(
+					"A legacy pi-hermes-memory install was found at ~/.pi/agent/pi-hermes-memory. Migrate to gsd-pi-hermes-memory now?",
+					["✅ Yes, migrate now", "⏭️  Skip this session", "❌ Don't ask again"],
+					{},
+				);
+				const choice = Array.isArray(rawChoice) ? rawChoice[0] : rawChoice;
+				if (choice === "✅ Yes, migrate now") {
+					const migrationResult = await migrateFromPiHermesMemory();
+					ctx.ui.notify?.(
+						formatMigrationResult(migrationResult),
+						migrationResult.errors.length > 0 ? "warning" : "info",
+					);
+				} else if (choice === "❌ Don't ask again") {
+					// Negative choice: drop a "skipped" marker so we don't
+					// re-prompt every session.
+					try {
+						const fs = await import("node:fs/promises");
+						await fs.writeFile(
+							path.join(globalDir, ".pi-hermes-memory-migration-skipped"),
+							new Date().toISOString(),
+							"utf-8",
+						);
+					} catch {
+						// best effort
+					}
+				}
+			} catch {
+				// ctx.ui.select might not be available in some contexts; fail
+				// silently so we don't block startup.
+			}
+		}
 	});
 
 	registerProjectSkillDiscoveryHandler(
@@ -383,6 +429,7 @@ export default function (pi: ExtensionAPI) {
 	registerInterviewCommand(pi, store);
 	registerSwitchProjectCommand(pi, config);
 	registerLearnMemoryCommand(pi);
+	registerMigrateFromPiCommand(pi);
 	registerSyncMarkdownMemoriesCommand(
 		pi,
 		dbManager,
