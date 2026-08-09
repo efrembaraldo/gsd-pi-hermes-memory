@@ -402,14 +402,14 @@ export async function migrateFromPiHermesMemory(
 			try {
 				await writeMigrationMarker(
 					{
-					migratedAt: new Date().toISOString(),
-					sourceRoot: legacyRoot,
-					targetRoot: effectiveAgentRoot,
-					moved: result.moved,
-					skipped: result.skipped,
-					skillsNormalised: result.skillsNormalised,
-					projectsMigrated: result.projectsMigrated,
-					databaseMigrated: result.databaseMigrated,
+						migratedAt: new Date().toISOString(),
+						sourceRoot: legacyRoot,
+						targetRoot: effectiveAgentRoot,
+						moved: result.moved,
+						skipped: result.skipped,
+						skillsNormalised: result.skillsNormalised,
+						projectsMigrated: result.projectsMigrated,
+						databaseMigrated: result.databaseMigrated,
 					},
 					effectiveAgentRoot,
 				);
