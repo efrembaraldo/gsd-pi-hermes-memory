@@ -1,6 +1,6 @@
 {
   "name": "@efrembaraldo/gsd-pi-hermes-memory",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "🧠 Persistent memory + 🔍 session search + 🛡️ secret scanning for GSD Pi. Token-aware policy-only memory by default, SQLite FTS5 search, auto-consolidation, procedural skills. 732 tests. Ported from Hermes agent. Fork of chandra447/pi-hermes-memory",
   "type": "module",
   "main": "src/index.ts",
@@ -52,13 +52,17 @@
   },
   "peerDependencies": {
     "@gsd/pi-coding-agent": "*",
-    "@gsd/pi-ai": "*"
+    "@gsd/pi-ai": "*",
+    "@gsd/pi-tui": "*"
   },
   "peerDependenciesMeta": {
     "@gsd/pi-coding-agent": {
       "optional": true
     },
     "@gsd/pi-ai": {
+      "optional": true
+    },
+    "@gsd/pi-tui": {
       "optional": true
     }
   },

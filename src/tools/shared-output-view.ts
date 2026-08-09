@@ -1,19 +1,6 @@
 import type { ToolRenderResultOptions } from "@gsd/pi-coding-agent";
 import stripAnsi from "strip-ansi";
-
-/**
- * Minimal Component shape compatible with what @gsd/pi-tui's rendering
- * helpers expect. We do NOT import @gsd/pi-tui here because the package
- * is workspace-only (not published on npmjs.com); declaring it as a
- * dependency would fail `npm install` with E404.
- *
- * The result returned by createSharedToolResultRenderer is shaped so
- * that whichever TUI runtime loads the extension (Box, render(),
- * invalidate()) can render it — the box implementation in particular
- * treats the render() output as a list of pre-decorated lines and
- * only wraps them in a background frame, so we don't lose anything by
- * returning plain strings.
- */
+import { Text, type Component } from "@gsd/pi-tui";
 
 /**
  * Local, dependency-free implementations of visibleWidth and
@@ -276,18 +263,11 @@ function renderView(
 	options: ToolRenderResultOptions,
 	theme: SharedOutputTheme | undefined,
 	background: ToolCardBackground,
-): { render(width: number): string[]; invalidate(): void } {
+): Component {
 	if (options.expanded) {
-		const text = view.expandedText || view.summary;
-		const lines = text.split(/\r?\n/);
-		return {
-			render(_width: number): string[] {
-				return lines.map((line) =>
-					restoreBackground(line, background, theme),
-				);
-			},
-			invalidate(): void {},
-		};
+		return new Text(view.expandedText || view.summary, 0, 0, (line) =>
+			restoreBackground(line, background, theme),
+		);
 	}
 
 	return {
@@ -332,7 +312,7 @@ export function createSharedToolResultRenderer(
 		options: ToolRenderResultOptions,
 		theme: SharedOutputTheme,
 		context?: { isError?: boolean },
-	): { render(width: number): string[]; invalidate(): void } => {
+	): Component => {
 		const adapted = adapt(result);
 		const displayView = {
 			...adapted,
