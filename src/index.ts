@@ -74,6 +74,7 @@ import {
 import { registerPreviewContextCommand } from "./handlers/preview-context.js";
 import { registerStandingPinCommand } from "./handlers/standing-pin.js";
 import { StandingInstructions } from "./store/standing-instructions.js";
+import { runRecoveryMaintenance } from "./store/recovery-maintenance.js";
 import { STANDING_FILE } from "./constants.js";
 import { loadConfig } from "./config.js";
 import { detectProject, detectProjectSkills } from "./project.js";
@@ -247,7 +248,7 @@ export default function (pi: ExtensionAPI) {
 		if (projectStore) await projectStore.loadFromDisk();
 		if (standingStore) await standingStore.load();
 
-		if (persistenceInitialized)
+		if (persistenceInitialized) {
 			scheduleSessionBackfill(dbManager, sessionsDir, {
 				notify: (message, level) => {
 					const ui = (
@@ -264,6 +265,19 @@ export default function (pi: ExtensionAPI) {
 					}
 				},
 			});
+
+			// Sweep .recovery-* / .retired-* sidecars on dormant stores that never
+			// reach saveToDisk; failures must not block startup (#202/#204).
+			try {
+				await runRecoveryMaintenance({ config, globalDir });
+			} catch (error) {
+				console.warn(
+					`⚠️ Snapshot retention sweep failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		}
 
 		// Implicit migration prompt: only on the first session_start in this
 		// process, so we don't badger the user every session.

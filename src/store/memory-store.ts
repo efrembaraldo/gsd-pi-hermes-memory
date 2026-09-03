@@ -42,6 +42,8 @@ import {
 
 const MAX_EXTERNAL_WRITE_RETRIES = 2;
 const RECOVERY_ACTIVE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const RECOVERY_MAX_COUNT = 32;
+const RECOVERY_MAX_BYTES = 64 * 1024 * 1024;
 const RETIRED_RECOVERY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const RETIRED_RECOVERY_MAX_COUNT = 32;
 const RETIRED_RECOVERY_MAX_BYTES = 64 * 1024 * 1024;
@@ -181,6 +183,18 @@ export class MemoryStore {
 			memory: this.renderBlock("memory", strippedMemory),
 			user: this.renderBlock("user", strippedUser),
 		};
+	}
+
+	/**
+	 * Enforce snapshot retention for every target of this store without a
+	 * write (#202). A store that stops being written never reaches saveToDisk,
+	 * so its .recovery-* and .retired-* artifacts only converge here.
+	 */
+	async maintainRecoveryFiles(): Promise<void> {
+		for (const target of ["memory", "user", "failure"] as const) {
+			const filePath = await this.resolveStoragePath(target);
+			await withMarkdownMutationLock(filePath, () => this.pruneRecoveryFiles(filePath));
+		}
 	}
 
 	// ─── CRUD ───
@@ -1272,19 +1286,36 @@ export class MemoryStore {
 		const activeCutoff = Date.now() - RECOVERY_ACTIVE_GRACE_MS;
 		try {
 			const names = await fs.readdir(directory);
-			await Promise.all(
-				names
-					.filter((name) => recoveryPattern.test(name))
-					.map(async (name) => {
-						const recoveryPath = path.join(directory, name);
-						try {
-							const state = await fs.lstat(recoveryPath);
-							if (!state.isFile()) return;
-							if (state.mtimeMs >= activeCutoff) return;
-							await this.retireRecoveryFile(recoveryPath, filePath);
-						} catch {}
-					}),
+			const recoveryNames = names.filter((name) => recoveryPattern.test(name));
+			const recovery = await Promise.all(
+				recoveryNames.map(async (name) => {
+					const recoveryPath = path.join(directory, name);
+					try {
+						const state = await fs.lstat(recoveryPath);
+						return state.isFile() ? { path: recoveryPath, state } : null;
+					} catch {
+						return null;
+					}
+				}),
 			);
+			const recoveryCandidates = recovery
+				.filter((item): item is NonNullable<typeof item> => item !== null)
+				.sort((left, right) => right.state.mtimeMs - left.state.mtimeMs);
+			let recoveryCount = 0;
+			let recoveryBytes = 0;
+			for (const item of recoveryCandidates) {
+				const withinGrace = item.state.mtimeMs >= activeCutoff;
+				const withinCount = recoveryCount < Math.max(0, RECOVERY_MAX_COUNT - 1);
+				const withinBytes = recoveryBytes + item.state.size <= RECOVERY_MAX_BYTES;
+				if ((withinGrace || recoveryCount === 0) && withinCount && withinBytes) {
+					recoveryCount++;
+					recoveryBytes += item.state.size;
+					continue;
+				}
+				try {
+					await this.retireRecoveryFile(item.path, filePath);
+				} catch {}
+			}
 
 			const retiredNames = (await fs.readdir(directory)).filter((name) =>
 				retiredPattern.test(name),
