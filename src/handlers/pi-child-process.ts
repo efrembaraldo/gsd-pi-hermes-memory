@@ -347,7 +347,7 @@ function resolvedWindowsPiInvocation(
 			join(
 				directory,
 				"node_modules",
-				"@earendil-works",
+				"@gsd",
 				"pi-coding-agent",
 				"dist",
 				"cli.js",
@@ -355,7 +355,7 @@ function resolvedWindowsPiInvocation(
 			join(
 				directory,
 				"node_modules",
-				"@earendil-works",
+				"@gsd",
 				"pi-coding-agent",
 				"cli.js",
 			),

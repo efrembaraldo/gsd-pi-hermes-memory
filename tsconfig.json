@@ -12,17 +12,7 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": true,
-    "sourceMap": true,
-    "paths": {
-      "@gsd/pi-coding-agent": ["./vendor/@gsd/pi-coding-agent"],
-      "@gsd/pi-coding-agent/*": ["./vendor/@gsd/pi-coding-agent/dist/*"],
-      "@gsd/pi-ai": ["./vendor/@gsd/pi-ai"],
-      "@gsd/pi-ai/*": ["./vendor/@gsd/pi-ai/dist/*"],
-      "@gsd/pi-tui": ["./vendor/@gsd/pi-tui"],
-      "@gsd/pi-tui/*": ["./vendor/@gsd/pi-tui/dist/*"],
-      "@gsd/pi-agent-core": ["./vendor/@gsd/pi-agent-core"],
-      "@gsd/pi-agent-core/*": ["./vendor/@gsd/pi-agent-core/dist/*"]
-    }
+    "sourceMap": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "vendor"]

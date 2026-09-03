@@ -351,12 +351,12 @@ describe("resolveChildPiInvocation", () => {
       resolveChildPiInvocation(["-p", "--no-session", "hello"], {
         platform: "win32",
         execPath: "C:\\Program Files\\nodejs\\node.exe",
-        piCliPath: "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
+        piCliPath: "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@gsd\\pi-coding-agent\\dist\\cli.js",
       }),
       {
         command: "C:\\Program Files\\nodejs\\node.exe",
         args: [
-          "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
+          "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@gsd\\pi-coding-agent\\dist\\cli.js",
           "-p",
           "--no-session",
           "hello",
@@ -371,7 +371,7 @@ describe("resolveChildPiInvocation", () => {
     const cliPath = path.join(
       binDirectory,
       "node_modules",
-      "@earendil-works",
+      "@gsd",
       "pi-coding-agent",
       "dist",
       "cli.js",
@@ -721,7 +721,7 @@ describe("execChildPrompt", () => {
     const cliPath = path.join(
       binDirectory,
       "node_modules",
-      "@earendil-works",
+      "@gsd",
       "pi-coding-agent",
       "dist",
       "cli.js",
