@@ -1,0 +1,37 @@
+# slug	ref	description
+# Placeholder manifest for upstream cherry-picks. Format: slug<TAB>ref<TAB>description.
+# `ref` is empty until S03+ populates it from upstream pi-hermes-memory. The script
+# treats an empty `ref` as "skip with a placeholder log line" so this manifest is
+# safe to ship before the SHAs are known.
+skill-auto-load		auto-load skill entries during bootstrap
+skill-manifest-cache		cache parsed skill manifests to avoid re-parsing every session
+skill-cold-start-warmup		pre-warm skill index at session start (non-blocking)
+skill-eviction-policy		bounded LRU eviction for the skill manifest cache
+skill-content-hash		content-addressed dedup of skill blobs on disk
+correction-detection		detect user corrections in assistant output and surface as a nudge
+correction-confidence-floor		suppress low-confidence correction nudges to reduce noise
+tool-call-nudge		nudge the assistant when tool-call frequency drops mid-session
+tool-call-window-tuning		tune the tool-call nudge window (default 4 turns)
+memory-dedup		dedup overlapping memory entries on write
+memory-fingerprint		stable content hash used by dedup + ranking
+memory-write-debounce		coalesce rapid memory writes to reduce I/O thrash
+markdown-mutation-retry		retry transient markdown mutations after lock contention
+markdown-mutation-deadline		bound mutation retries with a deadline
+atomic-write-batch		batch small writes through a single atomic rename
+lock-coordinator-v2		second-generation AtomicLockCoordinator with owner fencing
+lock-acquisition-trace		trace lock acquisition latency for diagnostics
+recovery-file-retention		tune the .recovery-* retention window
+retired-file-sweep		sweep .retired-* files older than the age cap
+conflict-resolution-v2		prefer user.md over memory.md on conflict
+legacy-path-detection		detect and migrate ~/.pi/agent/pi-hermes-memory paths
+extension-root-migration-fix		harden the extension root migration against partial moves
+schema-migration-step		additive schema step for new columns without full re-init
+db-integrity-recheck		periodic PRAGMA integrity_check on idle databases
+insights-command-v2		/memory-insights now shows usage + ranking breakdown
+insight-bounded-fifo		bound the insights ring buffer with a FIFO eviction
+session-flush-debounce		debounce session-end flushes to coalesce rapid closes
+pre-compaction-flush		flush memories before compaction, not only at shutdown
+background-review-throttle		throttle the background review cadence per session
+background-review-cancel		cancel an in-flight review when its session ends
+content-scanner-allowlist		allowlist safe content patterns to reduce false positives
+delegate-tool-allowlist		restrict the delegate tool to a curated allowlist

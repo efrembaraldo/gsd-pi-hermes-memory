@@ -110,6 +110,9 @@ tmp/
 
 receipts/
 
+# Cherry-pick logs emitted by scripts/cherry-pick.sh (one .log per slug).
+.cherry-pick-logs/
+
 # Build artifacts emitted by `npx tsc --project . --outDir src/ --declaration false --sourceMap false`
 # Required so `node --test tests/store/db.test.ts` resolves `import '../../src/store/db.js'` from
 # ESM test files (Node has no automatic .js → .ts resolution). Regenerate before running that
