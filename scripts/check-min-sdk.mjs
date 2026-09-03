@@ -2,12 +2,13 @@
 /**
  * Type-check the extension against the OLDEST Pi SDK we claim to support.
  *
- * Why this exists: `peerDependencies` is the only thing telling a user whether
- * this extension works on their Pi, and nothing verified it. The declared floor
- * had drifted to `>=0.74.0` while `src/handlers/review-memory-ops.ts` imports
- * `@gsd/pi-ai/compat`, a subpath that does not exist before 0.80.1 —
- * so anyone on 0.74-0.79.x got ERR_PACKAGE_PATH_NOT_EXPORTED and no extension
- * at all, with nothing in CI to catch it.
+ * Why this exists: `dependencies["@opengsd/gsd-pi"]` is the only thing telling a
+ * user whether this extension works on their Pi, and nothing verified it.
+ * Historically the declared floor had drifted to `>=0.74.0` while
+ * `src/handlers/review-memory-ops.ts` imports `@gsd/pi-ai/compat`, a subpath
+ * that did not exist before 0.80.1 — so anyone on 0.74-0.79.x got
+ * ERR_PACKAGE_PATH_NOT_EXPORTED and no extension at all, with nothing in CI to
+ * catch it.
  *
  * The regular `check` job structurally cannot catch this: it installs whatever
  * the devDependency range resolves to, which is always new enough.
@@ -51,15 +52,23 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => { restore(); process.exit(130); });
 }
 
-const pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf-8"));
-const range = pkg.peerDependencies?.[`${SCOPE}/pi-coding-agent`];
+let pkg;
+try {
+  pkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf-8"));
+} catch (error) {
+  console.error(`[check-min-sdk] FAIL: cannot parse package.json: ${error.message}`);
+  process.exit(1);
+}
+// After S01 the floor is declared via `dependencies["@opengsd/gsd-pi"]` (a
+// version range like "^1.17.0"); see T01 for the migration rationale.
+const range = pkg.dependencies?.["@opengsd/gsd-pi"];
 const floor = /(\d+\.\d+\.\d+)/.exec(range ?? "")?.[1];
 if (!floor) {
-  console.error(`peerDependencies range "${range}" has no explicit floor — pin one like ">=0.80.1"`);
+  console.error(`[check-min-sdk] FAIL: dependencies["@opengsd/gsd-pi"] range "${range}" has no explicit floor — pin one like "^1.17.0"`);
   process.exit(1);
 }
 
-console.log(`Minimum supported ${SCOPE}/pi-coding-agent: ${floor}`);
+console.log(`Minimum supported @opengsd/gsd-pi: ${floor} (resolves @gsd/pi-{coding-agent,ai,tui}@${floor})`);
 
 const scratch = mkdtempSync(path.join(tmpdir(), "pi-hermes-min-sdk-"));
 let failed = false;
@@ -74,6 +83,15 @@ try {
 
   // Swap the scope in place so the project's own tsconfig applies unchanged —
   // no divergent probe config that could drift from what `npm run check` uses.
+  //
+  // Compatibility note (post-S01): scopeDir (`node_modules/@gsd/`) now contains
+  // 3 symlinks created by scripts/link-pi-sdks.mjs that point at
+  // `node_modules/@opengsd/gsd-pi/packages/*`. The stash/swap below is unchanged
+  // because `renameSync` moves the scope directory itself (the symlinks are
+  // entries *inside* it, not targets of the swap) and `stashDir` lives at
+  // `node_modules/@gsd.real` — a sibling path that does not collide with any
+  // symlink, so the original state is fully restored by `restore()` even if the
+  // probe install fails.
   renameSync(scopeDir, stashDir);
   symlinkSync(path.join(scratch, "node_modules", SCOPE), scopeDir);
 
@@ -88,7 +106,7 @@ try {
   if (!/Command failed/.test(String(error?.message))) console.error(error);
   console.error(
     `\nsrc does NOT type-check against the declared minimum (${floor}).\n`
-    + "Either raise the peerDependencies floor in package.json to a version that works,\n"
+    + "Either raise the dependencies[\"@opengsd/gsd-pi\"] floor in package.json to a version that works,\n"
     + "or stop using the SDK API that is missing at that version.\n",
   );
 } finally {
