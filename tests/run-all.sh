@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-# Run each test file in its own tsx process to avoid node:test runner hang.
+# Run each test file in its own process to avoid node:test runner hang.
+#
+# Supports two extensions:
+#   - `*.test.ts` is run via `npx tsx --test` (TypeScript source for
+#     extension behaviour tests; needs the project's TS toolchain).
+#   - `*.test.mjs` is run via `node --test` directly (plain ESM test,
+#     typically build-tool probes like `link-pi-sdks.test.mjs` that must
+#     work even when the TS toolchain is broken).
+#
+# Adding a new extension? Add a `case` arm below — don't re-invent the
+# `run_test_file` shell.
 set -euo pipefail
 PASS=0
 
@@ -20,14 +30,28 @@ fi
 
 run_test_file() {
   local file="$1"
+  local ext="${file##*.}"
+
+  # Pick the runner based on extension. Plain `.mjs`/`.js`/`.cjs` use the
+  # stock `node --test` runner; `.ts` uses tsx so the project's TypeScript
+  # source compiles in-process.
+  local runner=()
+  case "$ext" in
+    mjs|js|cjs) runner=(node --test) ;;
+    ts)         runner=(npx tsx --test) ;;
+    *)          echo "Unsupported test extension: $file" >&2; return 2 ;;
+  esac
+
   if ((${#TIMEOUT_BIN[@]} > 0)); then
-    "${TIMEOUT_BIN[@]}" --kill-after=5s "$TEST_TIMEOUT" npx tsx --test "$file"
+    "${TIMEOUT_BIN[@]}" --kill-after=5s "$TEST_TIMEOUT" "${runner[@]}" "$file"
   else
-    npx tsx --test "$file"
+    "${runner[@]}" "$file"
   fi
 }
 
-for f in $(find tests -name '*.test.ts' | sort); do
+# Collect every `*.test.<ext>` file under tests/. Sorting keeps the order
+# deterministic so CI output is reproducible across runs.
+for f in $(find tests -name '*.test.*' | sort); do
   echo "--- $f ---"
   if run_test_file "$f"; then
     PASS=$((PASS + 1))
