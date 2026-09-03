@@ -145,6 +145,7 @@ export class DatabaseManager {
   private lastRecovery: DatabaseRecoveryResult | null = null;
   private openGuard: (() => void) | null = null;
   private activeRecoveryLease: { coordinator: AtomicLockCoordinator; key: string; token: string } | null = null;
+  private pendingOpenIntegrityScan: Promise<void> | null = null;
 
   constructor(memoryDir: string, recoveryOptions: DatabaseRecoveryOptions = {}) {
     this.displayDbPath = path.join(memoryDir, 'sessions.db');
@@ -284,7 +285,7 @@ export class DatabaseManager {
 
       this.configureConnection(db);
       this.initializeSchema(db);
-      this.assertIntegrityOk(db, 'quick_check', 'after schema initialization');
+      this.scheduleOpenIntegrityScan(db);
       ok = true;
       return db;
     } finally {
@@ -292,6 +293,39 @@ export class DatabaseManager {
         this.safeClose(db);
       }
     }
+  }
+
+  /**
+   * Schedules a deferred post-open integrity scan so startup never blocks on
+   * an optional, best-effort check. A single in-flight scan is tracked via
+   * `pendingOpenIntegrityScan` so concurrent `open()` calls share one scan
+   * rather than racing overlapping PRAGMA quick_check runs on the same
+   * handle. If the captured handle is no longer the current db (close,
+   * recovery, or a verifying-but-discarded handle), the scheduled scan
+   * silently resolves instead of touching a stale connection.
+   */
+  private scheduleOpenIntegrityScan(db: DatabaseLike): void {
+    if (this.pendingOpenIntegrityScan) {
+      return;
+    }
+    const targetDb = db;
+    this.pendingOpenIntegrityScan = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        try {
+          if (this.db !== targetDb) {
+            resolve();
+            return;
+          }
+          this.assertIntegrityOk(targetDb, 'quick_check', 'after schema initialization (async)');
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[gsd-pi-hermes-memory] post-open integrity scan failed: ${message}`);
+        } finally {
+          this.pendingOpenIntegrityScan = null;
+          resolve();
+        }
+      }, 0);
+    });
   }
 
   private configureConnection(db: DatabaseLike): void {
@@ -365,7 +399,7 @@ export class DatabaseManager {
   }
 
   private recoverDatabaseFile(cause: unknown, verify: () => void): DatabaseRecoveryResult {
-    const coordinator = AtomicLockCoordinator.shared(path.join(path.dirname(this.dbPath), '.pi-hermes-locks.sqlite'));
+    const coordinator = AtomicLockCoordinator.shared(path.join(path.dirname(this.dbPath), '.gsd-pi-hermes-locks.sqlite'));
     const lockKey = `recovery:${this.dbPath}`;
     const deadline = Date.now() + Math.max(0, this.recoveryOptions.recoveryLockWaitMs);
 
@@ -488,11 +522,15 @@ export class DatabaseManager {
   }
 
   private clearRecoveryFailuresBestEffort(): void {
-    try { this.clearRecoveryFailures(); } catch {}
+    try { this.clearRecoveryFailures(); } catch {
+      // Best effort — the circuit state file is advisory and optional.
+    }
   }
 
   private cleanupRecoveryArtifactsBestEffort(): void {
-    try { this.cleanupRecoveryArtifacts(); } catch {}
+    try { this.cleanupRecoveryArtifacts(); } catch {
+      // Best effort — leftover quarantined backups are non-fatal.
+    }
   }
 
   private cleanupRecoveryArtifacts(): void {

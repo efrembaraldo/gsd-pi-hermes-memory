@@ -112,7 +112,7 @@ async function acquireConsolidationLock(
 	const root = consolidationLockRoot();
 	await fs.mkdir(root, { recursive: true });
 	const coordinator = AtomicLockCoordinator.shared(
-		path.join(root, "locks.sqlite"),
+		path.join(root, ".gsd-pi-hermes-locks.sqlite"),
 	);
 	const key = consolidationLockKey(target, toolTarget, storageIdentity);
 	const lockOptions = { staleMs: CONSOLIDATION_LOCK_STALE_MS };

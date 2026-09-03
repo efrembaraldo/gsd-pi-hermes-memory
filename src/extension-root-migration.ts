@@ -281,7 +281,7 @@ async function acquireMigrationLease(
 	targetRoot: string,
 ): Promise<AtomicLockLease> {
 	const coordinator = AtomicLockCoordinator.shared(
-		path.join(targetRoot, ".pi-hermes-locks.sqlite"),
+		path.join(targetRoot, ".gsd-pi-hermes-locks.sqlite"),
 	);
 	const sourceIdentity = canonicalStoragePathSync(
 		path.join(legacyRoot, "sessions.db"),

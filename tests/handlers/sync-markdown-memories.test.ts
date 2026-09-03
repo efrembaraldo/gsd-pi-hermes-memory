@@ -306,7 +306,7 @@ describe("memory sqlite sync + markdown backfill", () => {
 		const coordinator = new AtomicLockCoordinator(
 			path.join(
 				path.dirname(path.dirname(identity)),
-				".pi-hermes-locks.sqlite",
+				".gsd-pi-hermes-locks.sqlite",
 			),
 		);
 		const lease = coordinator.tryAcquire(`mutation:${identity}`, {
