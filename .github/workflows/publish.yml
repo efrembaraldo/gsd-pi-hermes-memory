@@ -11,11 +11,21 @@ on:
         options:
           - "false"
           - "true"
+  workflow_run:
+    workflows: ["CI"] # deve combaciare col `name:` di ci.yml
+    types:
+      - completed
+    branches: [main]
 
 jobs:
   verify:
     name: Verify before publish
     runs-on: ubuntu-latest
+    # workflow_run si attiva su QUALSIASI esito di CI (success, failure,
+    # cancelled, ...), non solo su success. Senza questo guard, publish
+    # partirebbe anche quando CI è fallita. Per workflow_dispatch (manuale)
+    # la condizione è sempre vera: comportamento invariato per quel trigger.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
 
@@ -49,14 +59,27 @@ jobs:
 
       - run: npm install
 
+      - name: Verify version not already published
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@efrembaraldo/gsd-pi-hermes-memory@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::Version @efrembaraldo/gsd-pi-hermes-memory@$VERSION is already published. Bump version in package.json first."
+            exit 1
+          fi
+          echo "Version $VERSION is not yet published, proceeding."
+
+      # workflow_run/release non hanno github.event.inputs (esiste solo per
+      # workflow_dispatch) — senza questa distinzione esplicita, nessuna
+      # delle due condizioni sarebbe vera quando CI attiva il publish da
+      # sola, e non partirebbe né il publish reale né il dry-run.
       - name: Publish
-        if: github.event.inputs.dry-run == 'false'
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry-run == 'false'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Dry run
-        if: github.event.inputs.dry-run == 'true'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true'
         run: npm publish --dry-run --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
