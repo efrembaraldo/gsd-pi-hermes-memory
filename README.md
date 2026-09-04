@@ -39,6 +39,8 @@ gsd install npm:@efrembaraldo/gsd-pi-hermes-memory
 /learn-memory-tool
 ```
 
+> **`@opengsd/gsd-pi@^1.17.0` viene installato automaticamente** come dipendenza runtime e fornisce i sub-package `@gsd/pi-coding-agent`, `@gsd/pi-ai`, `@gsd/pi-tui`, `@gsd/pi-agent-core` consumati dall'estensione. `npm install` esegue `scripts/link-pi-sdks.mjs` (via `precheck`/`pretest`) che crea i symlink necessari in `node_modules/@gsd/` con version detection contro `MIN_GSDPI_VERSION=1.17.0`.
+
 ## Upgrade Notes (v0.7.10)
 
 If you’re upgrading from older versions, startup now auto-migrates extension data safely:
@@ -105,6 +107,8 @@ npm install
 npm run check
 npm test
 ```
+
+> **Nota**: il primo `npm install` può richiedere ~30s in più per il `precheck`, che esegue `scripts/link-pi-sdks.mjs` per creare i symlink `node_modules/@gsd/*` → `node_modules/@opengsd/gsd-pi/packages/*`. Lo script è idempotente e skippa silenziosamente su run successivi.
 
 ## Installation
 

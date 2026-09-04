@@ -4,7 +4,7 @@
 
 This is a GSD Pi coding agent extension that brings Hermes-style persistent memory and a learning loop to any GSD Pi user. After `gsd install`, users get persistent memory across sessions, a background learning loop, and session-end flush.
 
-**v0.1 is complete** (119 tests, v0.1.0 tagged). Current work is **v0.2: Skills + Smart Curation** — see `docs/0.2/TASKS.md`.
+**v0.0.7 is in release-candidate phase (M001 Fondazioni)**. See `docs/ROADMAP.md` for the full roadmap and `.gsd/phases/01-fondazioni-0-0-7-dipendenza-gsd-pi-e-fix/` for the active phase plan.
 
 ## Architecture
 
@@ -12,6 +12,7 @@ This is a GSD Pi coding agent extension that brings Hermes-style persistent memo
 - **Runtime**: GSD Pi extension API (`@gsd/pi-coding-agent`)
 - **Storage**: Two markdown files (`MEMORY.md`, `USER.md`) in `~/.gsd/agent/memory/`
 - **Entry point**: `src/index.ts` — registers tools, event handlers, and commands
+- **Dependency model**: il package dipende da `@opengsd/gsd-pi@^1.17.0` (installato via npm); `scripts/link-pi-sdks.mjs` crea symlink `node_modules/@gsd/*` → `node_modules/@opengsd/gsd-pi/packages/*` ad ogni `npm install`. Idempotente.
 
 ## Key Files
 
@@ -22,10 +23,15 @@ This is a GSD Pi coding agent extension that brings Hermes-style persistent memo
 | `src/constants.ts` | Prompts, defaults, delimiter |
 | `src/store/memory-store.ts` | Core `MemoryStore` class — CRUD, persistence, frozen snapshot |
 | `src/store/content-scanner.ts` | `scanContent()` — injection/exfiltration detection |
+| `src/store/recovery-maintenance.ts` | sweep `.recovery-*`/`.retired-*` su store dormienti; wired in `session_start` con `console.warn` non-bloccante |
+| `src/store/db.ts` | migration FTS5 `tokenize='trigram'` idempotente (preserva dati) |
 | `src/tools/memory-tool.ts` | `registerMemoryTool()` — LLM tool definition |
 | `src/handlers/background-review.ts` | `setupBackgroundReview()` — learning loop via `pi.exec` |
 | `src/handlers/session-flush.ts` | `setupSessionFlush()` — pre-compaction/shutdown flush |
 | `src/handlers/insights.ts` | `registerInsightsCommand()` — `/memory-insights` command |
+| `src/handlers/migrate-from-pi-hermes-memory.ts` | bridge `~/.pi/agent/pi-hermes-memory/` → `~/.gsd/agent/`, idempotente via marker file |
+| `scripts/link-pi-sdks.mjs` | symlink `@gsd/*` → `@opengsd/gsd-pi/packages/*` con version detection `MIN_GSDPI_VERSION` |
+| `scripts/cherry-pick.sh` + `scripts/cherry-pick.manifest` | infrastruttura cherry-pick da upstream pi-hermes-memory (32 entry placeholder + header) |
 | `PLAN.md` | Full v0.1 implementation plan with Hermes source file reference map |
 | `docs/ROADMAP.md` | Full roadmap with Hermes competitive analysis + gap analysis |
 | `docs/0.2/TASKS.md` | v0.2 task breakdown — Skills + Smart Curation |
@@ -37,6 +43,7 @@ This is a GSD Pi coding agent extension that brings Hermes-style persistent memo
 3. **`pi.exec()` for background review** — Stays within Pi's intended extension API
 4. **`§` delimiter** — Same as Hermes for consistency
 5. **No SQLite** — GSD Pi has its own `SessionManager`, we read from it directly
+6. **Lock DB unificato** — `withMarkdownMutationLock` usa `.gsd-pi-hermes-locks.sqlite` su tutti i siti (consolidation, auto-consolidate, sync-markdown, migration); atomic-lock-coordinator e sqlite-lazy-load accettano path arbitrari per i test
 
 ## Hermes Source Reference
 
