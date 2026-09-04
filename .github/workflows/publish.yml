@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: 22
 
-      - run: npm install
+      - run: npm ci
 
       - name: Type check
         run: npm run check
@@ -57,7 +57,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - run: npm install
+      - run: npm ci
 
       - name: Verify version not already published
         run: |
