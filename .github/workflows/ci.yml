@@ -25,7 +25,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm install
+      - run: npm ci
 
       - run: npm run check
 
@@ -45,6 +45,8 @@ jobs:
       # The `check` job installs whatever the devDependency range resolves to,
       # which is always new enough to hide a broken peerDependencies floor.
       # This one type-checks against the oldest Pi we advertise support for.
+      - run: npm ci
+
       - run: npm run check:min-sdk
 
   test:
@@ -59,7 +61,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm install
+      - run: npm ci
 
       - run: npm test
 
@@ -74,7 +76,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm install
+      - run: npm ci
 
       - name: Check for uncommitted changes
         run: git diff --exit-code

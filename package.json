@@ -19,6 +19,7 @@
   "scripts": {
     "precheck": "node scripts/link-pi-sdks.mjs",
     "check": "node scripts/ensure-dev.mjs check && tsc --noEmit",
+    "precheck:min-sdk": "node scripts/link-pi-sdks.mjs",
     "check:min-sdk": "node scripts/ensure-dev.mjs check && node scripts/check-min-sdk.mjs",
     "pretest": "node scripts/link-pi-sdks.mjs",
     "test": "node scripts/ensure-dev.mjs test && tests/run-all.sh",

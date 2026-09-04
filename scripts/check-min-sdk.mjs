@@ -74,6 +74,12 @@ const scratch = mkdtempSync(path.join(tmpdir(), "pi-hermes-min-sdk-"));
 let failed = false;
 try {
   writeFileSync(path.join(scratch, "package.json"), `${JSON.stringify({ name: "min-sdk-probe", private: true })}\n`);
+  // Pin the allow-scripts setting in the scratch .npmrc. npm 11+ treats a
+  // global `npm config set allow-scripts=…` as a project-scoped `--allow-scripts`
+  // flag and rejects it with EALLOWSCRIPTS unless the project (or its .npmrc)
+  // declares its own `allow-scripts`. We don't need any scripts to run for
+  // type-checking, so allow nothing here.
+  writeFileSync(path.join(scratch, ".npmrc"), `allow-scripts=false\n`);
   // The sub-packages listed in FLOOR_PACKAGES are nested inside the
   // `@opengsd/gsd-pi` tarball at `packages/<name>/` (see scripts/link-pi-sdks.mjs
   // for the dev-install wiring) and are NOT published as standalone packages
@@ -86,6 +92,21 @@ try {
   execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", "--no-package-lock", parentSpec], {
     cwd: scratch,
     stdio: ["ignore", "ignore", "inherit"],
+    // Strip npm_* env vars inherited from `npm run` — the parent npm process
+    // injects `npm_config_allow_scripts`, which npm 11+ treats as a
+    // project-scoped `--allow-scripts` flag and rejects with EALLOWSCRIPTS
+    // unless the project (or its .npmrc) declares its own. We only need the
+    // packages on disk for type-checking, so the cleanest fix is to give the
+    // child npm a config-free environment; the scratch .npmrc above is the
+    // only allow-scripts authority the child sees.
+    env: (() => {
+      const filtered = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (k === "npm_config_allow_scripts" || k === "npm_lifecycle_event" || k === "npm_lifecycle_script" || k === "npm_command" || k === "npm_execpath") continue;
+        filtered[k] = v;
+      }
+      return filtered;
+    })(),
   });
 
   // Swap the scope in place so the project's own tsconfig applies unchanged —
