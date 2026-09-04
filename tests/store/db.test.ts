@@ -73,8 +73,7 @@ describe('DatabaseManager', () => {
   describe('initialization', () => {
     it('should create database file on first getDb() call', () => {
       assert.strictEqual(dbManager.exists(), false);
-      const db = dbManager.getDb();
-      assert.ok(db);
+      dbManager.getDb();
       assert.strictEqual(dbManager.exists(), true);
     });
 
@@ -720,7 +719,7 @@ describe('DatabaseManager', () => {
 
       assert.strictEqual(dbManager.getLastRecovery()?.strategy, 'rebuilt');
       assert.deepStrictEqual(dbManager.getLastRecovery()?.recoveredRows, {
-        extension_metadata: 0,
+        extension_metadata: 1,
         sessions: 1,
         messages: 50,
         session_files: 0,
@@ -844,13 +843,13 @@ describe('DatabaseManager', () => {
 
   describe('WAL mode', () => {
     it('should enable WAL mode for concurrent reads', () => {
-      const db = dbManager.getDb();
+      const db = dbManager.getDb() as InstanceType<typeof Database>;
       const result = db.pragma('journal_mode', { simple: true }) as string;
       assert.strictEqual(result, 'wal');
     });
 
     it('should use SQLite default-size WAL autocheckpoints', () => {
-      const db = dbManager.getDb();
+      const db = dbManager.getDb() as InstanceType<typeof Database>;
       const result = db.pragma('wal_autocheckpoint', { simple: true }) as number;
       assert.strictEqual(result, SQLITE_WAL_AUTOCHECKPOINT_PAGES);
     });
@@ -858,7 +857,7 @@ describe('DatabaseManager', () => {
 
   describe('foreign keys', () => {
     it('should enforce foreign key constraints', () => {
-      const db = dbManager.getDb();
+      const db = dbManager.getDb() as InstanceType<typeof Database>;
       const result = db.pragma('foreign_keys', { simple: true }) as number;
       assert.strictEqual(result, 1);
 
@@ -869,6 +868,109 @@ describe('DatabaseManager', () => {
           VALUES (?, ?, ?, ?, ?)
         `).run('bad-msg', 'nonexistent-session', 'user', 'test', '2026-05-03T00:00:00Z');
       }, /FOREIGN KEY/);
+    });
+  });
+
+  describe('fts5 trigram migration', () => {
+    it('rebuilds existing unicode61 FTS tables and preserves indexed data', () => {
+      // 1. Seed a v0.0.6-style DB: tokenize=unicode61 + a CJK memory that
+      //    unicode61 cannot retrieve, and no fts5_tokenizer_version metadata row.
+      const dbPath = path.join(tmpDir, 'sessions.db');
+      dbManager.getDb().prepare(`
+        INSERT INTO memories (project, target, category, content, failure_reason, tool_state, corrected_to, created, last_referenced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(null, 'memory', 'preference', '设备清单包含 NAS 和备份策略', null, null, null, '2026-05-09', '2026-05-09');
+      dbManager.close();
+
+      // 2. Simulate a legacy DB: drop the trigram tables (none exist yet at
+      //    unicode61), recreate them with the default tokenizer, drop the
+      //    migration marker so the next open triggers initializeSchema →
+      //    migrateFtsTokenizer.
+      const legacyDb = new Database(dbPath);
+      legacyDb.exec(`DROP TABLE IF EXISTS message_fts`);
+      legacyDb.exec(`DROP TABLE IF EXISTS memory_fts`);
+      legacyDb.exec(`CREATE VIRTUAL TABLE message_fts USING fts5(content, content='messages', content_rowid='rowid')`);
+      legacyDb.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(content, content='memories', content_rowid='id')`);
+      legacyDb.exec(`INSERT INTO message_fts(message_fts) VALUES('rebuild')`);
+      legacyDb.exec(`INSERT INTO memory_fts(memory_fts) VALUES('rebuild')`);
+      legacyDb.prepare(`DELETE FROM extension_metadata WHERE key = ?`).run('fts5_tokenizer_version');
+      legacyDb.close();
+
+      // 3. Reopen the manager: initializeSchema must rebuild both FTS tables
+      //    with the trigram tokenizer and without losing the seeded memory.
+      const migratedManager = new DatabaseManager(tmpDir);
+      const migratedDb = migratedManager.getDb();
+
+      const ftsRows = migratedDb.prepare(`
+        SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN ('message_fts', 'memory_fts')
+      `).all() as Array<{ name: string; sql: string | null }>;
+      assert.strictEqual(ftsRows.length, 2, 'both FTS5 tables should be present after migration');
+      for (const fts of ftsRows) {
+        assert.match(
+          String(fts.sql ?? ''),
+          /\btokenize\s*=\s*['"]trigram['"]/i,
+          `${fts.name} should expose the trigram tokenizer in sqlite_master`,
+        );
+      }
+
+      // 4. The CJK memory, indexed in the legacy unicode61 FTS but unreachable
+      //    via MATCH, must be retrievable after the migration rebuilds the
+      //    trigram index from the memories content table.
+      const cjkHits = migratedDb.prepare(`
+        SELECT content FROM memory_fts WHERE memory_fts MATCH ?
+      `).all('设备清单') as Array<{ content: string }>;
+      assert.ok(cjkHits.length >= 1, 'CJK substring should be retrievable after trigram migration');
+      assert.ok(cjkHits[0].content.includes('设备清单'), 'search hit content should contain the CJK substring');
+
+      // 5. The marker row should be set so a second reopen is a no-op.
+      const versionRow = migratedDb.prepare(`
+        SELECT value FROM extension_metadata WHERE key = 'fts5_tokenizer_version'
+      `).get() as { value: string } | undefined;
+      assert.ok(versionRow, 'fts5_tokenizer_version row should exist after migration');
+      assert.strictEqual(versionRow.value, 'trigram-v1');
+
+      migratedManager.close();
+    });
+
+    it('migrated FTS tables expose tokenize=\'trigram\' in sqlite_master', () => {
+      // Fresh DB (initializeSchema applies CREATE VIRTUAL TABLE … tokenize='trigram'
+      // and migrateFtsTokenizer, both producing trigram indexes).
+      const db = dbManager.getDb();
+      const rows = db.prepare(`
+        SELECT name, sql FROM sqlite_master WHERE type='table' AND name IN ('message_fts', 'memory_fts')
+      `).all() as Array<{ name: string; sql: string | null }>;
+      assert.strictEqual(rows.length, 2);
+      const names = rows.map((r) => r.name).sort();
+      assert.deepStrictEqual(names, ['memory_fts', 'message_fts']);
+      for (const row of rows) {
+        assert.match(
+          String(row.sql ?? ''),
+          /\btokenize\s*=\s*['"]trigram['"]/i,
+          `${row.name} should expose tokenize='trigram'`,
+        );
+      }
+    });
+
+    it('migrateFtsTokenizer is idempotent across repeated openings', () => {
+      // Opening a trigram-migrated DB twice consecutively must skip the
+      // DROP+CREATE+REBUILD entirely (no errors, no duplicate content rows,
+      // no extension_metadata churn).
+      dbManager.getDb();
+      dbManager.close();
+      const before = fs.readFileSync(path.join(tmpDir, 'sessions.db'));
+      dbManager = new DatabaseManager(tmpDir);
+      const db = dbManager.getDb();
+      const after = fs.readFileSync(path.join(tmpDir, 'sessions.db'));
+      // DB content is byte-for-byte identical (no WAL page allocs, no changes).
+      assert.deepStrictEqual(after, before, 'reopening an idempotent migration should not touch the DB file');
+
+      const versionRow = db.prepare(`
+        SELECT value FROM extension_metadata WHERE key = 'fts5_tokenizer_version'
+      `).get() as { value: string };
+      assert.strictEqual(versionRow.value, 'trigram-v1');
+
+      const memoryRows = db.prepare(`SELECT COUNT(*) as count FROM memories`).get() as { count: number };
+      assert.strictEqual(memoryRows.count, 0, 'no orphan memory rows from idempotent re-migration');
     });
   });
 });

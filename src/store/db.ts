@@ -85,6 +85,30 @@ const DEFAULT_RECOVERY_OPTIONS: ResolvedDatabaseRecoveryOptions = {
   recoveryBackupRetention: 3,
 };
 
+// FTS5 trigram tokenizer migration — mirrors upstream commit fdc76a7.
+// Trigram indexes tri-character windows, so queries shorter than three chars
+// (and CJK without spaces) require it; unicode61 (default) only tokenizes on
+// token boundaries. The migration must be idempotent (a re-opened DB skips
+// itself) and reconstruct the indexes from the content tables without losing
+// any indexed data.
+const FTS5_TOKENIZER_VERSION_KEY = 'fts5_tokenizer_version';
+const FTS5_TOKENIZER_VERSION = 'trigram-v1';
+const FTS5_TRIGRAM_TABLES = ['message_fts', 'memory_fts'] as const;
+
+type Fts5TrigramTable = (typeof FTS5_TRIGRAM_TABLES)[number];
+
+type Fts5TrigramSpec = {
+  readonly parent: string;
+  readonly rowid: string;
+};
+
+const FTS5_TRIGRAM_SPECS: Readonly<Record<Fts5TrigramTable, Fts5TrigramSpec>> = {
+  message_fts: { parent: 'messages', rowid: 'rowid' },
+  memory_fts: { parent: 'memories', rowid: 'id' },
+};
+
+const FTS5_TRIGRAM_TOKENIZER_PATTERN = /\btokenize\s*=\s*['"]trigram['"]/i;
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
 }
@@ -360,7 +384,7 @@ export class DatabaseManager {
     // CHECK(target IN ('memory','user')) constraints to include 'failure'.
     this.ensureLegacySchemaColumns(db);
     this.migrateLegacyMemoriesTargetConstraint(db);
-    this.rebuildMemoryFts(db);
+    this.migrateFtsTokenizer(db);
   }
 
   private hasExistingMainDatabaseFile(): boolean {
@@ -1020,12 +1044,73 @@ export class DatabaseManager {
     }
   }
 
-  private rebuildMemoryFts(db: DatabaseLike): void {
-    const ftsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'").get() as { name?: string } | undefined;
-    if (!ftsTable) return;
+  private migrateFtsTokenizer(db: DatabaseLike): void {
+    // Idempotent: a DB that's already at trigram-v1 with both tables migrated
+    // skips the DROP+CREATE entirely. The combined check (version row AND per-
+    // table tokenizer) protects against a half-finished migration left behind
+    // by a crashed process between DROP and CREATE.
+    const versionRow = db.prepare(
+      'SELECT value FROM extension_metadata WHERE key = ?'
+    ).get(FTS5_TOKENIZER_VERSION_KEY) as { value?: string } | undefined;
+    const alreadyMigrated = versionRow?.value === FTS5_TOKENIZER_VERSION
+      && FTS5_TRIGRAM_TABLES.every((name) => this.usesTrigram(db, name));
+    if (alreadyMigrated) return;
 
-    // Keep FTS index consistent after table rebuild/migrations.
-    db.exec("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')");
+    const runMigration = () => {
+      for (const tableName of FTS5_TRIGRAM_TABLES) {
+        const spec = FTS5_TRIGRAM_SPECS[tableName];
+        const quotedTable = quoteIdentifier(tableName);
+        const quotedParent = quoteIdentifier(spec.parent);
+        const quotedRowid = quoteIdentifier(spec.rowid);
+        db.exec(`DROP TABLE IF EXISTS ${quotedTable}`);
+        db.exec(
+          `CREATE VIRTUAL TABLE ${quotedTable} USING fts5(`
+          + `content, content=${quotedParent}, content_rowid=${quotedRowid}, tokenize='trigram')`
+        );
+        // Rebuild from the content table so previously indexed rows are
+        // available against the new tokenizer without re-inserting them.
+        db.exec(`INSERT INTO ${quotedTable}(${quotedTable}) VALUES('rebuild')`);
+      }
+      db.prepare(
+        'INSERT INTO extension_metadata (key, value) VALUES (?, ?) '
+        + 'ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      ).run(FTS5_TOKENIZER_VERSION_KEY, FTS5_TOKENIZER_VERSION);
+    };
+
+    if (!db.transaction) {
+      // Bun fallback: no better-sqlite3-style transaction helper, so wrap in
+      // explicit BEGIN IMMEDIATE / COMMIT with foreign_keys OFF around the
+      // DROP+CREATE+REBUILD. Same shape as migrateLegacyMemoriesTargetConstraint.
+      db.exec('PRAGMA foreign_keys = OFF');
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          runMigration();
+          db.exec('COMMIT');
+        } catch (err) {
+          try { db.exec('ROLLBACK'); } catch { /* best effort */ }
+          throw err;
+        }
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON');
+      }
+      return;
+    }
+
+    const tx = db.transaction(runMigration);
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      tx();
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  }
+
+  private usesTrigram(db: DatabaseLike, tableName: string): boolean {
+    const row = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name=?"
+    ).get(tableName) as { sql?: string | null } | undefined;
+    return typeof row?.sql === 'string' && FTS5_TRIGRAM_TOKENIZER_PATTERN.test(row.sql);
   }
 
   /**

@@ -33,8 +33,45 @@ const SCRIPT = join(ROOT, "scripts", "link-pi-sdks.mjs");
 const GSDPI_PKG_JSON = join(ROOT, "node_modules", "@opengsd", "gsd-pi", "package.json");
 const GSD_SCOPE = join(ROOT, "node_modules", "@gsd");
 
-const PACKAGES = ["pi-coding-agent", "pi-ai", "pi-tui"];
+const PACKAGES = [
+	"pi-coding-agent",
+	"pi-ai",
+	"pi-tui",
+	"pi-agent-core",
+	"native",
+	"agent-core",
+	"agent-modes",
+];
+/**
+ * Mirror of `PACKAGE_DIRS` in `scripts/link-pi-sdks.mjs`: most symlink
+ * names match their physical directory under `packages/`, but the
+ * monorepo's `gsd-` prefixed workspace dirs (`gsd-agent-core`,
+ * `gsd-agent-modes`) diverge. The test pins the same mapping here so
+ * the canonical-target assertion cannot drift silently if the linker
+ * grows new entries.
+ */
+const PACKAGE_DIRS = {
+	"pi-coding-agent": "pi-coding-agent",
+	"pi-ai": "pi-ai",
+	"pi-tui": "pi-tui",
+	"pi-agent-core": "pi-agent-core",
+	"native": "native",
+	"agent-core": "gsd-agent-core",
+	"agent-modes": "gsd-agent-modes",
+};
 const MIN_VERSION = "1.17.0";
+
+/**
+ * Compute the canonical relative target for the `@gsd/<name>` symlink,
+ * matching `relativeTarget()` in `scripts/link-pi-sdks.mjs`.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function expectedTarget(name) {
+	const dir = PACKAGE_DIRS[name] ?? name;
+	return join("..", "@opengsd", "gsd-pi", "packages", dir);
+}
 
 /**
  * Run the linker script as a child process, returning both stdout and
@@ -138,7 +175,7 @@ test("idempotent run leaves state unchanged", () => {
 	for (const { name, target } of afterFirst) {
 		assert.equal(
 			target,
-			join("..", "@opengsd", "gsd-pi", "packages", name),
+			expectedTarget(name),
 			`${name} symlink target drifted after first run`,
 		);
 	}
@@ -147,7 +184,7 @@ test("idempotent run leaves state unchanged", () => {
 	assert.equal(second.code, 0, `second run failed: ${second.stderr}`);
 	assert.match(
 		second.stdout,
-		/\[link-pi-sdks\] 3\/3 symlinks already ready/,
+		/\[link-pi-sdks\] 7\/7 symlinks already ready/,
 		`second run must emit the idempotent diagnostic, got: ${second.stdout}`,
 	);
 
@@ -163,10 +200,10 @@ test("idempotent run leaves state unchanged", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 2 — 3 symlinks exist and are dir symlinks
+// Test 2 — all PACKAGES symlinks exist and are dir symlinks
 // ---------------------------------------------------------------------------
 
-test("3 symlinks exist and are directory symlinks", () => {
+test("all PACKAGES symlinks exist and are directory symlinks", () => {
 	for (const name of PACKAGES) {
 		const linkPath = join(GSD_SCOPE, name);
 		assert.ok(existsSync(linkPath), `${linkPath} does not exist`);

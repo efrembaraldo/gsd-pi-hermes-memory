@@ -24,8 +24,8 @@
  *      was found and which range satisfies it.
  *
  * Output (stdout, structured):
- *   - `[link-pi-sdks] linked N/3 symlinks (from @opengsd/gsd-pi@X.Y.Z, min 1.17.0)` — on a real (re)link
- *   - `[link-pi-sdks] 3/3 symlinks already ready (from @opengsd/gsd-pi@X.Y.Z, min 1.17.0), skipping` — on idempotent no-op
+ *   - `[link-pi-sdks] linked N/M symlinks (from @opengsd/gsd-pi@X.Y.Z, min 1.17.0)` — on a real (re)link, where `M` is the number of packages in `PACKAGE_DIRS`
+ *   - `[link-pi-sdks] M/M symlinks already ready (from @opengsd/gsd-pi@X.Y.Z, min 1.17.0), skipping` — on idempotent no-op
  *   - `[link-pi-sdks] FAIL: …` — on any precondition failure (exit 1)
  *
  * Diagnostics for a future agent (D004):
@@ -62,12 +62,47 @@ const GSDPI_PKG = join(NM, "@opengsd", "gsd-pi");
 const MIN_GSDPI_VERSION = "1.17.0";
 
 /**
- * The three workspace sub-packages actually imported by this extension's
- * source code (`src/`). Adding a new entry here must be paired with adding
- * the `@gsd/<name>` import to a TypeScript file, otherwise the link is dead
- * weight.
+ * Workspace sub-packages imported by this extension's source code (`src/`)
+ * **and** by `@gsd/pi-coding-agent` itself at runtime. The runtime list is
+ * the load-bearing one: anything pulled in transitively from `loader.js`,
+ * `theme/theme.js`, or other dist entrypoints must be linked, otherwise
+ * Node's ESM resolver throws `ERR_MODULE_NOT_FOUND` the first time a test
+ * or session touches `@gsd/pi-coding-agent`. Today that means:
+ *
+ *   - `pi-coding-agent`, `pi-ai`, `pi-tui` — used by `src/` directly
+ *   - `pi-agent-core` — pulled in by `dist/core/extensions/loader.js`
+ *   - `native` — pulled in by `dist/theme/theme.js` (`highlightCode`,
+ *     `supportsLanguage`) which `initTheme()` indirectly loads
+ *   - `agent-core` — re-exported by `pi-coding-agent/dist/core/{lifecycle-hooks,
+ *     blob-store,keybindings,artifact-manager,fallback-resolver,system-prompt,
+ *     extension-session-types}.js`; transitively loaded by anything that
+ *     touches `initTheme()` or extension discovery
+ *   - `agent-modes` — referenced in
+ *     `dist/core/extensions/extension-upstream-types.d.ts` and exposed by
+ *     `pi-coding-agent` for custom editor mode registration
+ *
+ * The keys are the symlink names that appear under `node_modules/@gsd/`
+ * (which must match the package's own `"name"` field in its
+ * `package.json`). The values are the directory names inside
+ * `node_modules/@opengsd/gsd-pi/packages/`, which sometimes diverge from
+ * the symlink name because the gsd-pi monorepo uses a `gsd-` prefix on
+ * its workspace directories for some packages.
+ *
+ * Adding a new entry here must be paired with adding the `@gsd/<name>`
+ * import to a TypeScript file OR confirming a transitive runtime
+ * dependency, otherwise the link is dead weight.
  */
-const PACKAGES = ["pi-coding-agent", "pi-ai", "pi-tui"];
+const PACKAGE_DIRS = {
+	"pi-coding-agent": "pi-coding-agent",
+	"pi-ai": "pi-ai",
+	"pi-tui": "pi-tui",
+	"pi-agent-core": "pi-agent-core",
+	"native": "native",
+	// Symlink name → physical directory name under packages/
+	"agent-core": "gsd-agent-core",
+	"agent-modes": "gsd-agent-modes",
+};
+const PACKAGES = Object.keys(PACKAGE_DIRS);
 
 /**
  * Parse an X.Y.Z version string into a numeric tuple.
@@ -111,14 +146,18 @@ function compareVersions(a, b) {
 /**
  * Build the relative symlink target that lives in
  * `node_modules/@gsd/<name>` and points at
- * `node_modules/@opengsd/gsd-pi/packages/<name>`.
+ * `node_modules/@opengsd/gsd-pi/packages/<dir>`. The `name → dir`
+ * mapping is in `PACKAGE_DIRS`; the default of identity is kept so
+ * most entries (those where the symlink name matches the directory
+ * name) need no explicit entry.
  *
  * @param {string} name
  * @returns {string}
  */
 function relativeTarget(name) {
+	const dir = PACKAGE_DIRS[name] ?? name;
 	// From node_modules/@gsd/ the parent is node_modules/.
-	return join("..", "@opengsd", "gsd-pi", "packages", name);
+	return join("..", "@opengsd", "gsd-pi", "packages", dir);
 }
 
 /**
@@ -222,7 +261,7 @@ if (compareVersions(installed, MIN_GSDPI_VERSION) < 0) {
 
 if (allSymlinksReady()) {
 	console.log(
-		`[link-pi-sdks] 3/3 symlinks already ready (from @opengsd/gsd-pi@${installed}, min ${MIN_GSDPI_VERSION}), skipping`,
+		`[link-pi-sdks] ${PACKAGES.length}/${PACKAGES.length} symlinks already ready (from @opengsd/gsd-pi@${installed}, min ${MIN_GSDPI_VERSION}), skipping`,
 	);
 	process.exit(0);
 }

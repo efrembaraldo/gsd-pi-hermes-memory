@@ -27,6 +27,7 @@ legacy-path-detection		detect and migrate ~/.pi/agent/pi-hermes-memory paths
 extension-root-migration-fix		harden the extension root migration against partial moves
 schema-migration-step		additive schema step for new columns without full re-init
 db-integrity-recheck		periodic PRAGMA integrity_check on idle databases
+fts5-trigram	fdc76a7	migrate FTS indexes to trigram tokenizer
 insights-command-v2		/memory-insights now shows usage + ranking breakdown
 insight-bounded-fifo		bound the insights ring buffer with a FIFO eviction
 session-flush-debounce		debounce session-end flushes to coalesce rapid closes
