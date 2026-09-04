@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-09-04
+
+### Fixed
+
+- **A2 fs async in `session_shutdown`**: la chiamata sincrona `require("node:fs").existsSync(sessionFile)` nel handler `pi.on("session_shutdown", ...)` di `src/index.ts` è stata sostituita con `await fsp.access(sessionFile)` (import statico `node:fs/promises`). Evita il blocco dell'event loop durante lo shutdown su sessioni di grandi dimensioni (JSONL con molte entries). Il `try/catch` esterno silente e la sequenza `dbManager.withCorruptionRecovery(...) → indexSession → upsertSessionFileMetadata` sono preservati.
+- **better-sqlite3 SIGABRT su Node 24** ([#193](https://github.com/efrembaraldo/gsd-pi-hermes-memory/issues/193), [#205](https://github.com/efrembaraldo/gsd-pi-hermes-memory/issues/205)): bump di `better-sqlite3` a `^13.0.3` risolve l'incompatibilità N-API con Node 24 che causava `SIGABRT` all'apertura del database di sessione (`sessions.db`). Senza questo bump l'estensione non caricava su Node ≥ 24.
+- **Recovery sweep store dormienti** ([#202](https://github.com/efrembaraldo/gsd-pi-hermes-memory/issues/202), [#204](https://github.com/efrembaraldo/gsd-pi-hermes-memory/issues/204)): `MemoryStore.maintainRecoveryFiles()` ora sposta i file `.recovery-*` / `.retired-*` orfani dagli store non più in uso; il nuovo `runRecoveryMaintenance()` viene invocato in `session_start` dentro un `try/catch` con `console.warn`, così un errore di sweep non blocca più l'avvio dell'estensione.
+- **Corruption-on-open non blocca startup** ([#186](https://github.com/efrembaraldo/gsd-pi-hermes-memory/issues/186)): `open()` ora schedula `scheduleOpenIntegrityScan` in modo asincrono (`setTimeout(0)`) invece di eseguire la scansione di integrità inline. Un `sessions.db` corrotto non blocca più il caricamento dell'estensione: l'utente vede un warning e la scansione gira in background.
+
+### Changed
+
+- **FTS5 trigram migration + LIKE fallback** (cherry-pick `fdc76a7`): le tabelle virtuali `message_fts` e `memory_fts` ora usano `tokenize='trigram'` per supporto nativo di query brevi e CJK. La migration è idempotente e preserva i dati indicizzati. In `searchMemories` è stato aggiunto un terzo livello di fallback `LIKE '%query%'` per recuperare le query di lunghezza ≤ 2 caratteri che il trigram non indicizza.
+- **Lock DB unificato**: il path del lock database è ora unificato a `.gsd-pi-hermes-locks.sqlite` su tutti i siti che usano `withMarkdownMutationLock` (consolidation, auto-consolidation, sync-markdown, migration). Niente più lock DB sparsi per directory: un solo coordinator per l'intero profilo utente.
+- **Dependency `@opengsd/gsd-pi@^1.17.0`**: rimosso il workaround `vendor/` copy + symlink + `tsconfig` `paths`. `npm install` ora installa `@opengsd/gsd-pi` come dipendenza normale e `scripts/link-pi-sdks.mjs` (eseguito in `precheck`/`pretest`) crea i symlink `node_modules/@gsd/{pi-coding-agent,pi-ai,pi-tui,pi-agent-core}` → `../@opengsd/gsd-pi/packages/<pkg>` con version detection contro `MIN_GSDPI_VERSION=1.17.0`. Lo script è idempotente.
+
 ## [0.9.3] - 2026-08-04
 
 ### Added
@@ -257,6 +272,7 @@ If you ran 0.9.0, the skills it relocated into `~/.pi/agent/skills/` **stay ther
 ### Added
 
 **Procedural Skills (`skill` tool)**
+
 - New `skill` tool with actions: `create`, `view`, `patch`, `edit`, `delete`
 - Skills stored as SKILL.md files in `~/.pi/agent/memory/skills/`
 - Progressive disclosure — skill index (name + description only) injected into system prompt, full content loaded on demand via `skill view`
@@ -266,6 +282,7 @@ If you ran 0.9.0, the skills it relocated into `~/.pi/agent/skills/` **stay ther
 - New `/memory-skills` command to list all agent-created skills
 
 **Auto-Consolidation**
+
 - When `add()` would exceed the character limit, automatically trigger consolidation instead of returning an error
 - Consolidation spawns a one-shot `pi.exec()` process that merges related entries and removes outdated ones
 - Parent process reloads from disk after consolidation to stay in sync with changes
@@ -273,6 +290,7 @@ If you ran 0.9.0, the skills it relocated into `~/.pi/agent/skills/` **stay ther
 - Configurable via `autoConsolidate` setting (default: `true`)
 
 **Correction Detection**
+
 - Detect user corrections in real-time and trigger immediate memory save
 - Two-pass pattern filter:
   - **Strong patterns** (always trigger): "don't do that", "I said...", "please don't...", "that's not what I..."
@@ -282,12 +300,14 @@ If you ran 0.9.0, the skills it relocated into `~/.pi/agent/skills/` **stay ther
 - Configurable via `correctionDetection` setting (default: `true`)
 
 **Tool-Call-Aware Nudge**
+
 - Background review now triggers based on tool call count OR turn count, whichever comes first
 - Counts `toolCall` blocks from the session branch at `turn_end` time
 - Default: triggers at 15 tool calls (configurable via `nudgeToolCalls`)
 - Both turn and tool-call counters reset after each review
 
 **Updated Background Review Prompt**
+
 - `COMBINED_REVIEW_PROMPT` now explicitly references the `skill` tool
 - Tells the agent to use `create` for new skills and `patch` for updating existing ones
 - Single review pass can save both memories and skills
@@ -303,7 +323,7 @@ If you ran 0.9.0, the skills it relocated into `~/.pi/agent/skills/` **stay ther
 New settings in `~/.pi/agent/hermes-memory-config.json`:
 
 | Setting | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `autoConsolidate` | `true` | Auto-merge when memory hits capacity |
 | `correctionDetection` | `true` | Detect user corrections and save immediately |
 | `nudgeToolCalls` | `15` | Tool calls before background review triggers |
@@ -316,6 +336,7 @@ New settings in `~/.pi/agent/hermes-memory-config.json`:
 ### Files Changed
 
 **New files (7 source + 6 test):**
+
 - `src/store/skill-store.ts` — SkillStore class with CRUD, frontmatter parsing, progressive disclosure
 - `src/tools/skill-tool.ts` — `skill` LLM tool registration and execute
 - `src/handlers/auto-consolidate.ts` — Consolidation trigger and `/memory-consolidate` command
@@ -329,6 +350,7 @@ New settings in `~/.pi/agent/hermes-memory-config.json`:
 - `tests/tools/skill-tool.test.ts`
 
 **Modified files (8):**
+
 - `src/index.ts` — Wire all new handlers, tools, commands, and system prompt injection
 - `src/types.ts` — New interfaces (`ConsolidationResult`, `SkillIndex`, `SkillDocument`, `SkillResult`) + config fields
 - `src/constants.ts` — New prompts (`CONSOLIDATION_PROMPT`, `CORRECTION_SAVE_PROMPT`, `SKILL_TOOL_DESCRIPTION`), correction patterns, updated `COMBINED_REVIEW_PROMPT`
