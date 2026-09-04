@@ -430,6 +430,49 @@ describe('sqlite-memory-store', () => {
       const results = searchMemories(dbManager, 'AND OR NOT');
       assert.strictEqual(results.length, 0);
     });
+
+    it('finds pure CJK substrings with the trigram tokenizer', () => {
+      addMemory(dbManager, '设备清单包含 NAS 和备份策略');
+
+      const results = searchMemories(dbManager, '设备清单');
+
+      assert.ok(results.length > 0, 'expected at least one result for a 4-char CJK substring');
+      assert.ok(
+        results.some((r) => r.content.includes('设备清单')),
+        'expected result content to include the CJK substring',
+      );
+    });
+
+    it('retains English token searches in the trigram index', () => {
+      addMemory(dbManager, '设备清单包含 NAS 和备份策略');
+
+      const results = searchMemories(dbManager, 'NAS');
+
+      assert.ok(results.length > 0, 'expected at least one result for an English token in a CJK-heavy memory');
+      assert.ok(
+        results.some((r) => r.content.includes('NAS')),
+        'expected result content to include NAS',
+      );
+    });
+
+    it('documents that one- and two-character queries do not match trigram FTS but are recovered by LIKE fallback', () => {
+      addMemory(dbManager, '设备清单包含 NAS 和备份策略');
+
+      // The trigram tokenizer only indexes 3+ character windows, so a 2-char
+      // CJK query produces no FTS5 tokens and returns zero rows from the
+      // primary and fallback FTS5 paths. The LIKE-substring fallback is what
+      // makes this query useful for users searching short CJK substrings.
+      const results = searchMemories(dbManager, '设备');
+
+      assert.ok(
+        results.length > 0,
+        'expected LIKE fallback to recover a 2-char CJK substring that trigram FTS cannot index',
+      );
+      assert.ok(
+        results.some((r) => r.content.includes('设备清单')),
+        'expected fallback result to include the CJK memory content',
+      );
+    });
   });
 
   describe('getMemories', () => {

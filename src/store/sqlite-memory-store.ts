@@ -1,13 +1,19 @@
-import { DatabaseManager } from './db.js';
+import type { DatabaseManager } from './db.js';
 import {
   buildFallbackFts5Query,
   buildNaturalLanguageFallbackQuery,
+  hasExplicitFts5Operator,
   isFts5QueryError,
   normalizeFts5Query,
   normalizeNaturalLanguageFts5Query,
 } from './fts-query.js';
 import { normalizeMemoryLookupText } from './memory-lookup.js';
 import type { MemoryCategory } from '../types.js';
+
+type MemoryDb = ReturnType<DatabaseManager['getDb']>;
+
+const QUERY_TOKEN_PATTERN = /"([^"]*)"|(\S+)/g;
+const NATURAL_LANGUAGE_CONNECTORS = new Set(['and', 'or', 'not', 'near']);
 
 const MEMORY_SELECT_COLUMNS = `
   id,
@@ -191,12 +197,105 @@ function escapeLikePattern(text: string): string {
   return text.replace(/[\\%_]/g, '\\$&');
 }
 
+/**
+ * Tokenize a query into the same LIKE-substring terms that the third-level
+ * fallback uses. Mirrors `collectNaturalLanguageTerms` from fts-query.ts but
+ * keeps LIKE behavior self-contained: connector stopwords are skipped,
+ * quoted phrases are preserved verbatim, and all remaining tokens are kept.
+ */
+function collectLikeTerms(query: string): string[] {
+  const terms: string[] = [];
+
+  for (const match of query.matchAll(QUERY_TOKEN_PATTERN)) {
+    const phrase = match[1];
+    const term = match[2];
+    if (phrase === undefined && term && NATURAL_LANGUAGE_CONNECTORS.has(term.toLowerCase())) {
+      continue;
+    }
+
+    const rawValue = phrase ?? term ?? '';
+    if (rawValue.length > 0) terms.push(rawValue);
+  }
+
+  return terms;
+}
+
+/**
+ * Third-level LIKE-substring fallback for `searchMemories`. Complements the
+ * FTS5 trigram index by recovering short (<3 char) and pure-CJK substring
+ * queries that the tokenizer cannot index, and by providing a defensive
+ * recovery path against FTS5 parse failures on queries with special chars.
+ */
+function runSearchLike(
+  db: MemoryDb,
+  terms: string[],
+  project: string | null | undefined,
+  target: string | undefined,
+  category: MemoryCategory | undefined,
+  limit: number,
+): SqliteMemoryEntry[] {
+  if (terms.length === 0) return [];
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  const likeConditions = terms.map(() => `m.content LIKE ? ESCAPE '\\'`);
+  conditions.push(`(${likeConditions.join(' OR ')})`);
+  for (const term of terms) {
+    params.push(`%${escapeLikePattern(term)}%`);
+  }
+
+  if (project !== undefined) {
+    if (project === null) {
+      conditions.push('m.project IS NULL');
+    } else {
+      conditions.push('m.project = ?');
+      params.push(project);
+    }
+  }
+
+  if (target) {
+    conditions.push('m.target = ?');
+    params.push(target);
+  }
+
+  if (category) {
+    conditions.push('m.category = ?');
+    params.push(category);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const sql = `
+    SELECT ${MEMORY_SELECT_COLUMNS}
+    FROM memories m
+    ${whereClause}
+    ORDER BY m.last_referenced DESC
+    LIMIT ?
+  `;
+
+  const rows = db.prepare(sql).all(...params, limit) as Array<{
+    id: number;
+    project: string | null;
+    target: string;
+    category: string | null;
+    content: string;
+    failure_reason: string | null;
+    tool_state: string | null;
+    corrected_to: string | null;
+    created: string;
+    last_referenced: string;
+  }>;
+
+  return rows.map(mapRow);
+}
+
 function parseMetadataComment(raw: string): { text: string; created: string; lastReferenced: string; project: string | null } {
   const match = raw.match(/^(.*?)\s*<!--\s*created=([^,]+),\s*last=([^,>]+)(?:,\s*project64=([A-Za-z0-9_-]+))?\s*-->\s*$/);
   if (match) {
     let project: string | null = null;
     if (match[4]) {
-      try { project = Buffer.from(match[4], 'base64url').toString('utf-8').trim() || null; } catch {}
+      try { project = Buffer.from(match[4], 'base64url').toString('utf-8').trim() || null; } catch { /* malformed base64 → leave project as null */ }
     }
     return {
       text: match[1].trim(),
@@ -694,9 +793,6 @@ export function searchMemories(
   const db = dbManager.getDb();
   const { project, target, category, limit = 10 } = options;
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
   // FTS5 match via subquery with escaped query
   const normalizedQuery = normalizeFts5Query(query);
   if (normalizedQuery.length === 0) {
@@ -791,11 +887,32 @@ export function searchMemories(
   }
 
   const fallbackQuery = buildFallbackFts5Query(query);
-  if (!fallbackQuery || fallbackQuery === normalizedQuery) {
-    return exactResults;
+  const fallbackResults = fallbackQuery && fallbackQuery !== normalizedQuery
+    ? runSearch(fallbackQuery)
+    : exactResults;
+
+  if (fallbackResults.length > 0) {
+    return fallbackResults;
   }
 
-  return runSearch(fallbackQuery);
+  // Third-level fallback: LIKE-substring matching. Mirrors the same fallback
+  // chain already applied to searchSessions (commit b0ead25). Catches CJK
+  // and short (<3 char) queries that the trigram FTS5 tokenizer cannot index,
+  // and provides a defensive recovery path against FTS5 parse failures on
+  // queries with special characters. Skipped for explicit operator queries
+  // so their exact semantics are preserved (matches the "should not broaden
+  // explicit operator queries" invariant).
+  if (!hasExplicitFts5Operator(query)) {
+    const likeTerms = collectLikeTerms(query);
+    if (likeTerms.length > 0) {
+      const likeResults = runSearchLike(db, likeTerms, project, target, category, limit);
+      if (likeResults.length > 0) {
+        return likeResults;
+      }
+    }
+  }
+
+  return fallbackResults;
 }
 
 /**
