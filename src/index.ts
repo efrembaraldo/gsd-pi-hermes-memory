@@ -23,6 +23,7 @@
  */
 
 import * as path from "node:path";
+import * as fsp from "node:fs/promises";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import type { ProjectStoreRef } from "./project-context.js";
 import { resolveProjectStore } from "./project-context.js";
@@ -494,17 +495,22 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		try {
 			const sessionFile = ctx.sessionManager.getSessionFile();
-			if (sessionFile && require("node:fs").existsSync(sessionFile)) {
-				const sessionData = parseSessionFile(sessionFile);
-				if (sessionData) {
-					dbManager.withCorruptionRecovery(() => {
-						indexSession(dbManager, sessionData);
-						// Keep session_files metadata in sync with the final on-disk state.
-						// Pi appends the closing session entry on shutdown after the last
-						// message_end, so without this upsert the stored size/mtime would be
-						// stale and the next startup would re-parse this file unnecessarily.
-						upsertSessionFileMetadata(dbManager, sessionFile, sessionData.id);
-					});
+			if (sessionFile) {
+				try {
+					await fsp.access(sessionFile);
+					const sessionData = parseSessionFile(sessionFile);
+					if (sessionData) {
+						dbManager.withCorruptionRecovery(() => {
+							indexSession(dbManager, sessionData);
+							// Keep session_files metadata in sync with the final on-disk state.
+							// Pi appends the closing session entry on shutdown after the last
+							// message_end, so without this upsert the stored size/mtime would be
+							// stale and the next startup would re-parse this file unnecessarily.
+							upsertSessionFileMetadata(dbManager, sessionFile, sessionData.id);
+						});
+					}
+				} catch {
+					// ENOENT or permission denied — skip silently so shutdown is never blocked
 				}
 			}
 		} catch {
