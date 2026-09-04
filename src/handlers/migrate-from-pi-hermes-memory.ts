@@ -368,22 +368,23 @@ export async function migrateFromPiHermesMemory(
 				// ignore
 			}
 		} else {
+			// Forward the caller-supplied progress callback (if any) but do NOT
+			// supply a `backupDatabase` override: the default `stageDatabaseSnapshot`
+			// in `migrateExtensionRoot` performs the SQLite online backup that is
+			// the whole point of this phase. A previous version of this code
+			// passed an adapter stub that called `onProgress?.()` without actually
+			// copying the source DB, which made `sessions.db` land at the staging
+			// path but never get verified — `fs.lstat(staged)` then failed with
+			// ENOENT and the migration aborted before publishing the target file.
+			const migrateOptions: Parameters<typeof migrateExtensionRoot>[2] = {};
+			if (options.onDatabaseBackupProgress) {
+				migrateOptions.onDatabaseBackupProgress = () =>
+					options.onDatabaseBackupProgress!(0, 1);
+			}
 			const legacyDatabaseResult = await migrateExtensionRoot(
 				legacyRoot,
 				effectiveAgentRoot,
-				{
-					backupDatabase: async (_source, _staged, onProgress) => {
-						// Adapt the (current, total) callback down to the () => void
-						// signature ExtensionRootMigrationOptions expects. The
-						// downstream helper doesn't currently care about progress,
-						// but we future-proof here so swapping it doesn't break
-						// callers.
-						if (options.onDatabaseBackupProgress) {
-							await options.onDatabaseBackupProgress(0, 1);
-						}
-						onProgress?.();
-					},
-				},
+				migrateOptions,
 			);
 			result.databaseMigrated = legacyDatabaseResult.moved;
 			result.warnings.push(...legacyDatabaseResult.warnings);
