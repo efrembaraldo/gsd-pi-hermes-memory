@@ -25,6 +25,12 @@ trap 'rm -rf "$tmp"' EXIT
 legacy_root="$tmp/.pi/agent/pi-hermes-memory"
 agent_root="$tmp/.gsd/agent"
 
+# Pre-create the agent root so Phase 4 (migrateExtensionRoot) can stage
+# the SQLite backup under `.sessions-db-migration-<uuid>/`. Without
+# this, stageDatabaseSnapshot's `fs.lstat(staged)` fails with ENOENT
+# because the staging directory's parent is missing. Same rationale
+# as migration-bridge-path.test.sh.
+mkdir -p "$agent_root"
 mkdir -p "$legacy_root"
 
 # Synthesize a sessions.db with one table and one row. better-sqlite3
