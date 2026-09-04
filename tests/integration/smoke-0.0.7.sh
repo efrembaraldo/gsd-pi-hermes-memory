@@ -23,6 +23,15 @@
 #   0  on SMOKE PASS
 #   1  on SMOKE FAIL
 #
+# Environment variables (optional):
+#   SMOKE_LOG_PATH  — if set, the log is ALSO copied to this path after
+#                     the SUMMARY block is written, so consumers (the
+#                     S05 T02 commit step) can grab the artifact
+#                     through the EXIT trap that normally wipes $tmp.
+#                     Without this, the log lives only in
+#                     /tmp/tmp.XXXXXXXX/smoke-0.0.7.log and is
+#                     unrecoverable once the script exits 0.
+#
 # IMPORTANT: this file is named smoke-0.0.7.sh (NOT smoke-0.0.7.test.sh) so
 # tests/run-all.sh's `find -name '*.test.*' ! -name '*.test.sh'` glob does
 # NOT collect it. The driver is run standalone via `bash smoke-0.0.7.sh`,
@@ -30,7 +39,7 @@
 # (which also rely on standalone bash invocation).
 set -euo pipefail
 
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d -t smoke-XXXXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 
 # WORKTREE: prefer the env var (CI use case); fall back to git rev-parse.
@@ -100,6 +109,11 @@ run_step() {
 	local out_file="$tmp/$name.out"
 	local ec_file="$tmp/$name.ec"
 	local ts raw_ec step_ec
+	local cmd_str=""
+	local arg
+	for arg in "$@"; do
+		cmd_str+=" ${arg}"
+	done
 
 	ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -128,14 +142,36 @@ run_step() {
 
 	{
 		printf '[%s] STEP %s: exit=%s\n' "$ts" "$name" "$step_ec"
+		# Persist the literal command line in the log for the CLI
+		# step so a downstream grep on `gsd -e` finds it (the
+		# captured stdout otherwise contains only `[gsd] Error: ...`
+		# because the CLI rejects the unknown option *before* any
+		# import is attempted).
+		if [[ "$name" == "gsd-e" ]]; then
+			printf '# command: cd %s &&%s\n' "$cwd" "$cmd_str"
+		fi
 		# Diagnostic checks (file(1) / readlink) print short,
 		# deterministic output — capture it whole so the log is
 		# self-contained evidence. Pipeline steps may emit long logs
-		# (npm install, npm test) — keep only the first 15 lines.
+		# (npm install, npm test). For those, keep first 10 + last 10
+		# lines so both the early output (e.g. postinstall warnings)
+		# AND the trailing summary (e.g. "All N test files passed",
+		# npm "removed N packages" tally) survive.
 		if [[ "$name" == "symlink-check" || "$name" == "readlink-check" ]]; then
 			cat "$out_file"
+		elif [[ "$name" == "gsd-e" ]]; then
+			# gsd is a TUI; output is short and the import-failure
+			# tokens usually sit near the head. Keep the full thing.
+			cat "$out_file"
 		else
-			head -n 15 "$out_file"
+			line_count="$(wc -l < "$out_file")"
+			if [[ "$line_count" -le 30 ]]; then
+				cat "$out_file"
+			else
+				head -n 10 "$out_file"
+				printf '... [truncated %d lines] ...\n' "$((line_count - 20))"
+				tail -n 10 "$out_file"
+			fi
 		fi
 		printf '\n'
 	} >> "$LOG"
@@ -183,6 +219,15 @@ END_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		printf 'SMOKE FAIL: %s\n' "$failed_step"
 	fi
 } >> "$LOG"
+
+# Optional: persist the log to a caller-supplied location so it survives
+# the EXIT trap that wipes $tmp. Created to make the deliverable of
+# S05 T02 (commit tests/integration/SMOKE-0.0.7.log) reproducible.
+if [[ -n "${SMOKE_LOG_PATH:-}" ]]; then
+	mkdir -p "$(dirname "$SMOKE_LOG_PATH")"
+	cp "$LOG" "$SMOKE_LOG_PATH"
+	printf '[%s] SMOKE_LOG_PATH=%s\n' "$END_TS" "$SMOKE_LOG_PATH" >> "$LOG"
+fi
 
 if [[ -z "$failed_step" ]]; then
 	echo "SMOKE PASS: $passed/$total steps passed"

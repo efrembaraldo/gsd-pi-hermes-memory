@@ -1,0 +1,78 @@
+# gsd-pi-hermes-memory smoke log (release 0.0.7)
+# start_utc:  2026-09-04T13:34:21Z
+# worktree:   /home/opengsd/gsd-projects/gsd-pi-hermes-memory
+# head_sha:   e75e4e8f73b2edf4b743764ac2a5dcfe36ae3ca2
+
+[2026-09-04T13:34:21Z] STEP clone: exit=0
+Cloning into '/tmp/smoke-AIkx8X7j/clone'...
+warning: --depth is ignored in local clones; use file:// instead.
+done.
+
+[2026-09-04T13:34:21Z] STEP npm-install-1: exit=0
+
+added 273 packages in 14s
+
+[2026-09-04T13:34:35Z] STEP link-pi-sdks-1: exit=0
+[link-pi-sdks] linked 7/7 symlinks (from @opengsd/gsd-pi@1.17.0, min 1.17.0)
+
+[2026-09-04T13:34:35Z] STEP symlink-check: exit=0
+node_modules/@gsd/agent-core: symbolic link to ../@opengsd/gsd-pi/packages/gsd-agent-core
+node_modules/@gsd/agent-modes: symbolic link to ../@opengsd/gsd-pi/packages/gsd-agent-modes
+node_modules/@gsd/native: symbolic link to ../@opengsd/gsd-pi/packages/native
+node_modules/@gsd/pi-agent-core: symbolic link to ../@opengsd/gsd-pi/packages/pi-agent-core
+node_modules/@gsd/pi-ai: symbolic link to ../@opengsd/gsd-pi/packages/pi-ai
+node_modules/@gsd/pi-coding-agent: symbolic link to ../@opengsd/gsd-pi/packages/pi-coding-agent
+node_modules/@gsd/pi-tui: symbolic link to ../@opengsd/gsd-pi/packages/pi-tui
+
+[2026-09-04T13:34:35Z] STEP readlink-check: exit=0
+../@opengsd/gsd-pi/packages/gsd-agent-core
+../@opengsd/gsd-pi/packages/gsd-agent-modes
+../@opengsd/gsd-pi/packages/native
+../@opengsd/gsd-pi/packages/pi-agent-core
+../@opengsd/gsd-pi/packages/pi-ai
+../@opengsd/gsd-pi/packages/pi-coding-agent
+../@opengsd/gsd-pi/packages/pi-tui
+
+[2026-09-04T13:34:35Z] STEP check: exit=0
+npm notice run @efrembaraldo/gsd-pi-hermes-memory@0.0.7-dev.0 precheck
+npm notice run node scripts/link-pi-sdks.mjs
+[link-pi-sdks] 7/7 symlinks already ready (from @opengsd/gsd-pi@1.17.0, min 1.17.0), skipping
+npm notice run @efrembaraldo/gsd-pi-hermes-memory@0.0.7-dev.0 check
+npm notice run node scripts/ensure-dev.mjs check && tsc --noEmit
+
+[2026-09-04T13:34:37Z] STEP test: exit=0
+npm notice run @efrembaraldo/gsd-pi-hermes-memory@0.0.7-dev.0 pretest
+npm notice run node scripts/link-pi-sdks.mjs
+[link-pi-sdks] 7/7 symlinks already ready (from @opengsd/gsd-pi@1.17.0, min 1.17.0), skipping
+npm notice run @efrembaraldo/gsd-pi-hermes-memory@0.0.7-dev.0 test
+npm notice run node scripts/ensure-dev.mjs test && tests/run-all.sh
+--- tests/config.test.ts ---
+npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line
+npm notice run @efrembaraldo/gsd-pi-hermes-memory@0.0.7-dev.0 npx
+npm notice run 'tsx' --test tests/config.test.ts
+▶ loadConfig
+... [truncated 1648 lines] ...
+✔ MIN_GSDPI_VERSION guard rejects older versions (34.27874ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 192.993535
+All 49 test files passed
+
+[2026-09-04T13:36:09Z] STEP link-pi-sdks-2: exit=0
+[link-pi-sdks] 7/7 symlinks already ready (from @opengsd/gsd-pi@1.17.0, min 1.17.0), skipping
+
+[2026-09-04T13:36:09Z] STEP npm-install-2: exit=0
+
+removed 21 packages in 516ms
+
+[2026-09-04T13:36:10Z] STEP gsd-e: exit=0
+# command: cd /tmp/smoke-AIkx8X7j/clone && timeout 10 gsd -e ./src/index.ts
+[gsd] Error: Unknown option: -e
+
+[2026-09-04T13:36:11Z] SUMMARY clone_sha=e75e4e8f73b2edf4b743764ac2a5dcfe36ae3ca2 total=10 passed=10
+SMOKE PASS: 10/10 steps passed

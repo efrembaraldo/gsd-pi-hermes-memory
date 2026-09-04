@@ -103,6 +103,12 @@ __pycache__/
 venv/
 target/
 *.log
+# Smoke log: 0.0.7 release validation artifact (committed so it acts as a
+# reproducible health snapshot of the npm install -> @gsd/* symlinks ->
+# check + test -> gsd -e pipeline run on a fresh clone). Regenerate with
+# `bash tests/integration/smoke-0.0.7.sh` (see tests/integration/SMOKE-0.0.7.log
+# for the most recent execution).
+!tests/integration/SMOKE-0.0.7.log
 coverage/
 .cache/
 tmp/
