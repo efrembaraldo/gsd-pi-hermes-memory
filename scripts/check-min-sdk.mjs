@@ -68,15 +68,22 @@ if (!floor) {
   process.exit(1);
 }
 
-console.log(`Minimum supported @opengsd/gsd-pi: ${floor} (resolves @gsd/pi-{coding-agent,ai,tui}@${floor})`);
+console.log(`Minimum supported @opengsd/gsd-pi: ${floor} (nests ${FLOOR_PACKAGES.map((n) => `${n}@${floor}`).join(", ")} under packages/)`);
 
 const scratch = mkdtempSync(path.join(tmpdir(), "pi-hermes-min-sdk-"));
 let failed = false;
 try {
   writeFileSync(path.join(scratch, "package.json"), `${JSON.stringify({ name: "min-sdk-probe", private: true })}\n`);
-  const specs = FLOOR_PACKAGES.map((name) => `${name}@${floor}`);
-  console.log(`Installing ${specs.join(" ")} ...`);
-  execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", "--no-package-lock", ...specs], {
+  // The sub-packages listed in FLOOR_PACKAGES are nested inside the
+  // `@opengsd/gsd-pi` tarball at `packages/<name>/` (see scripts/link-pi-sdks.mjs
+  // for the dev-install wiring) and are NOT published as standalone packages
+  // on npm — installing them directly (`npm install @gsd/pi-coding-agent@…`)
+  // 404s. Install only the parent and point the swap symlink at its nested
+  // packages/ directory, which is the same shape link-pi-sdks.mjs produces
+  // for the dev install.
+  const parentSpec = `@opengsd/gsd-pi@${floor}`;
+  console.log(`Installing ${parentSpec} ...`);
+  execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", "--no-package-lock", parentSpec], {
     cwd: scratch,
     stdio: ["ignore", "ignore", "inherit"],
   });
@@ -93,7 +100,7 @@ try {
   // symlink, so the original state is fully restored by `restore()` even if the
   // probe install fails.
   renameSync(scopeDir, stashDir);
-  symlinkSync(path.join(scratch, "node_modules", SCOPE), scopeDir);
+  symlinkSync(path.join(scratch, "node_modules", "@opengsd", "gsd-pi", "packages"), scopeDir);
 
   console.log("Type-checking src against the minimum SDK ...");
   execFileSync(path.join(repoRoot, "node_modules", ".bin", "tsc"), ["--noEmit"], {
