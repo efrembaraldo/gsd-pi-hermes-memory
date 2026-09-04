@@ -49,6 +49,18 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     environment: publish
+    # Trusted Publishing via OIDC: replace the classic `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`
+    # pattern (which requires a long-lived npm automation token to be stored as a repo
+    # secret) with npm's GitHub Actions OIDC trust flow. This mirrors the setup in
+    # efrembaraldo/gsd-pi-discussion-arena: `id-token: write` lets actions/setup-node
+    # exchange the workflow identity for a short-lived npm token, `--provenance`
+    # tells npm to use that token (and attach a signed build provenance statement).
+    # The counterpart on the npm side is a Trusted Publisher entry on the package
+    # config page (https://www.npmjs.com/package/@efrembaraldo/gsd-pi-hermes-memory
+    # → Settings → Trusted Publishers) authorizing this repo + workflow file.
+    permissions:
+      contents: read
+      id-token: write # required for npm provenance / Trusted Publishing
     steps:
       - uses: actions/checkout@v4
 
@@ -74,12 +86,8 @@ jobs:
       # sola, e non partirebbe né il publish reale né il dry-run.
       - name: Publish
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry-run == 'false'
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
 
       - name: Dry run
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true'
-        run: npm publish --dry-run --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --dry-run --provenance --access public
