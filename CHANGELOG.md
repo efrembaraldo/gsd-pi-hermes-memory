@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lock DB unificato**: il path del lock database è ora unificato a `.gsd-pi-hermes-locks.sqlite` su tutti i siti che usano `withMarkdownMutationLock` (consolidation, auto-consolidation, sync-markdown, migration). Niente più lock DB sparsi per directory: un solo coordinator per l'intero profilo utente.
 - **Dependency `@opengsd/gsd-pi@^1.17.0`**: rimosso il workaround `vendor/` copy + symlink + `tsconfig` `paths`. `npm install` ora installa `@opengsd/gsd-pi` come dipendenza normale e `scripts/link-pi-sdks.mjs` (eseguito in `precheck`/`pretest`) crea i symlink `node_modules/@gsd/{pi-coding-agent,pi-ai,pi-tui,pi-agent-core}` → `../@opengsd/gsd-pi/packages/<pkg>` con version detection contro `MIN_GSDPI_VERSION=1.17.0`. Lo script è idempotente.
 
+- **End-to-end verified in clean clone via smoke log**: [`tests/integration/SMOKE-0.0.7.log`](tests/integration/SMOKE-0.0.7.log) (reproducible with `bash tests/integration/smoke-0.0.7.sh`).
+
 ## [0.9.3] - 2026-08-04
 
 ### Added

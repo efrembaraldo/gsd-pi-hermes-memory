@@ -110,6 +110,8 @@ npm test
 
 > **Nota**: il primo `npm install` può richiedere ~30s in più per il `precheck`, che esegue `scripts/link-pi-sdks.mjs` per creare i symlink `node_modules/@gsd/*` → `node_modules/@opengsd/gsd-pi/packages/*`. Lo script è idempotente e skippa silenziosamente su run successivi.
 
+- Smoke log 0.0.7: see [`tests/integration/SMOKE-0.0.7.log`](tests/integration/SMOKE-0.0.7.log) (re-run with `bash tests/integration/smoke-0.0.7.sh`).
+
 ## Installation
 
 ```bash
