@@ -49,9 +49,12 @@ run_test_file() {
   fi
 }
 
-# Collect every `*.test.<ext>` file under tests/. Sorting keeps the order
-# deterministic so CI output is reproducible across runs.
-for f in $(find tests -name '*.test.*' | sort); do
+# Collect every `*.test.<ext>` file under tests/, excluding `*.test.sh`
+# which are integration tests run standalone via `bash <file>.test.sh`
+# (they orchestrate `node --import tsx/esm` themselves and the runner
+# here only supports `mjs|js|cjs|ts` extensions). Sorting keeps the
+# order deterministic so CI output is reproducible across runs.
+for f in $(find tests -name '*.test.*' ! -name '*.test.sh' | sort); do
   echo "--- $f ---"
   if run_test_file "$f"; then
     PASS=$((PASS + 1))
