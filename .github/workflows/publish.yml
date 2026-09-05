@@ -74,8 +74,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # gsd-pi-discussion-arena's working publish workflow does this to get the
+      # latest npm (the runner ships npm 12.0.2 which has open issues
+      # interacting with OIDC Trusted Publishing). One more attempt with the
+      # modern toolchain before falling back to NPM_TOKEN.
+      - name: Install npm
+        run: npm install -g npm@latest
 
       - run: npm ci
 
