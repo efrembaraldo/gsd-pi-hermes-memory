@@ -48,7 +48,15 @@ jobs:
     name: Publish to npm
     needs: verify
     runs-on: ubuntu-latest
-    environment: publish
+    # NOTE: no `environment:` here on purpose. npm Trusted Publishing requires
+    # exact-match between the workflow's environment (if set) and the Trusted
+    # Publisher's Environment name on npmjs.com. The configured Trusted
+    # Publisher for this package has an empty Environment name, so the
+    # workflow must not declare an environment either — otherwise npmjs.com
+    # rejects the OIDC token with 404 "is not in this registry" while still
+    # publishing a Sigstore provenance statement (which made the root cause
+    # hard to spot). gsd-pi-discussion-arena's working workflow follows the
+    # same pattern (no environment on the publish job).
     # Trusted Publishing via OIDC: replace the classic `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`
     # pattern (which requires a long-lived npm automation token to be stored as a repo
     # secret) with npm's GitHub Actions OIDC trust flow. This mirrors the setup in
